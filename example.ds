@@ -1,0 +1,28 @@
+
+/* comentarios
+asdfasd
+
+s
+*/
+var a;
+var b;
+
+// cometario
+
+function fun(){
+	return 1;
+}
+
+function funA(a){
+	print(b);
+	return a;
+}
+
+
+function funB(b){
+	b(a,b);
+	var a;
+	function funC(){
+		print(a);
+	}
+}
