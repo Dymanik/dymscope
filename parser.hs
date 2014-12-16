@@ -13,20 +13,50 @@ type FunctArgs = [String]
 
 data Stmt =   DeclVar Ident
 			| DeclFunct Ident FunctArgs Block 
-			| Assign Ident Expr
-			| CallFunctStmt Expr
-			| Return Expr
+			| DeclProc Ident FunctArgs Block 
+			| Assign Ident AExpr
+			| CallProc Ident [AExpr]
+			| Return AExpr
 	deriving Show
 
 
-data Expr =   Add Expr Expr 
-			| Mult Expr Expr 
-			| Div Expr Expr
-			| Minus Expr Expr
-			| Negate Expr
+data AExpr = Negate AExpr 
+			{-| Add AExpr AExpr-}
+			{-| Mult AExpr AExpr -}
+			{-| Div AExpr AExpr-}
+			{-| Minus AExpr AExpr-}
+			| BinAOp BinAOp AExpr AExpr
 			| Var Ident
 			| Val Integer 
-			| CallFunct Ident [Expr]
+			| CallFunct Ident [AExpr]
+	deriving Show
+
+data BinAOp = Add 
+			| Mult
+			| Div
+			| Minus
+			| Mod
+	deriving Show
+
+{-
+ -data BinBOp = And
+ -            | Or
+ -}
+
+
+data BExpr = Or BExpr BExpr
+			| And BExpr BExpr
+			| Comp Rel AExpr AExpr
+			| Not BExpr
+			| ValB Bool
+	deriving Show
+
+data Rel = LessT
+		|  LessTE
+		|  GreaterTE
+		|  GreaterT
+		|  Equals
+		|  NEquals
 	deriving Show
 
 -- Tokens
@@ -38,20 +68,16 @@ dymanikStyle = emptyDef {
 		commentLine = "//",
 		identStart = letter,
 		identLetter = alphaNum <|> char '_',
-		reservedOpNames = ["+","-","/","*","="],
+		reservedOpNames = ["+","-","/","*","=","&&","||","<",">","<=",">=","==","!==","!"],
 		reservedNames = [
 					"function",
 					"return",
+					"proc",
 					"var"
 					]
-	}
-
-
-
-
+		}
 
 lexer = Tok.makeTokenParser dymanikStyle
-
 comma = Tok.comma lexer
 semi = Tok.semi lexer
 reserved = Tok.reserved lexer
@@ -63,22 +89,21 @@ parens = Tok.parens lexer
 commaSep = Tok.commaSep lexer 
 whiteSpace = Tok.whiteSpace lexer 
 
--- Parser
+-- Parser Grammar
 --
-prog = whiteSpace *> stmts
+prog = whiteSpace *> manyTill stmt eof
 
-stmts = many stmt  
+stmts = many stmt
 
 stmt =  declFunct
+	<|> declProc
 	<|> (declVar
-	<|> try assign
-	<|> (CallFunctStmt <$> callFunct)
+	<|> (identifier >>=( \x-> CallProc x <$> parens args <|> (Assign x <$> (reservedOp "=" *> aexpr)))) 
 	) <* semi
 
 funstmts = many (funReturn <|> stmt)
 
-funReturn = Return <$> (reserved "return" *> expr <* semi)
-
+funReturn = Return <$> (reserved "return" *> aexpr <* semi)
 
 --Variable Declaration
 declVar =  DeclVar <$> (reserved "var" *> identifier) 
@@ -86,31 +111,54 @@ declVar =  DeclVar <$> (reserved "var" *> identifier)
 --Function Declaration
 declFunct = DeclFunct <$> (reserved "function" *> identifier) <*> parens functdeclargs <*> braces funstmts
 
-functdeclargs = commaSep (identifier)
+declProc = DeclProc <$> (reserved "proc" *> identifier) <*> parens functdeclargs <*> braces stmts
 
-assign = Assign <$> identifier <*> (reservedOp "=" *> expr)
+functdeclargs = commaSep identifier
 
-callFunct = CallFunct <$> identifier <*> parens args 
+assign = Assign <$> identifier <*> (reservedOp "=" *> aexpr)
 
-args = commaSep expr
+callProc = CallProc <$> identifier <*> parens args 
 
-
+args = commaSep aexpr
 
 --Expresion Parsers
 
 
 opTable = [ [ prefix "-" Negate],
-			[ binary "*" Mult AssocLeft, binary "/" Div AssocLeft],
-			[ binary "+" Add AssocLeft, binary "-" Minus AssocLeft]
+			[ binary "*" (BinAOp Mult) AssocLeft, binary "/" (BinAOp Div) AssocLeft],
+			[ binary "+" (BinAOp Add) AssocLeft, binary "-" (BinAOp Minus) AssocLeft]
 		  ]
 
 prefix op f  = Prefix ( reservedOp op *> return f) 
 
-binary op f assoc = Infix (reservedOp op *> return f) assoc
+binary op f  = Infix (reservedOp op *> return f) 
 
-expr =  buildExpressionParser opTable term
 
-term =  parens expr
+aexpr =  buildExpressionParser opTable term
+
+term =  parens aexpr
 	<|> Val <$> integer
-	<|> try callFunct
-	<|> Var <$> identifier
+	<|> (identifier >>=( \x-> CallFunct x <$> parens args <|> return ( Var x))) 
+
+opTableB = [ [ prefix "!" Not],
+			[ binary "&&" And AssocLeft, binary "||" Or AssocLeft]
+		  ]
+
+bexpr = buildExpressionParser opTableB bterm
+
+
+bterm = parens bexpr
+	<|> (reserved "true" >> return (ValB True))
+	<|> (reserved "false" >> return (ValB False))
+	<|> rterm
+
+
+rterm = flip Comp <$> aexpr <*> relation <*> aexpr
+
+relation  = reservedOp "<" *> return LessT
+		<|> reservedOp "<=" *> return LessTE
+		<|> reservedOp "==" *> return Equals
+		<|> reservedOp "!==" *> return NEquals
+		<|> reservedOp ">=" *> return GreaterTE
+		<|> reservedOp ">" *> return GreaterT
+

@@ -1,10 +1,11 @@
-
+var a;
+function asdf(){
+}
 /* comentarios
 asdfasd
 
 s
 */
-var a;
 var b;
 
 // cometario
@@ -13,6 +14,13 @@ function fun(){
 	return 1;
 }
 
+/*proc asdf(){
+	print a;
+}
+*/
+a=0x90;
+a=090; 
+a=90+1-3*5/5;
 function funA(a){
 	print(b);
 	return a;
@@ -20,6 +28,7 @@ function funA(a){
 
 
 function funB(b){
+	var b;
 	b(a,b);
 	var a;
 	function funC(){
