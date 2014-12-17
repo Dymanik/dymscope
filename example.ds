@@ -10,6 +10,16 @@ var b;
 
 // cometario
 
+if (true){
+	var tue;
+}else {
+	var f;
+}
+
+if (3<5 && true){
+	return 5;
+}
+
 function fun(){
 	return 1;
 }

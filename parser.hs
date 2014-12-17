@@ -1,4 +1,4 @@
-module Main where
+module Parser where
 
 import Text.ParserCombinators.Parsec hiding ((<|>), many)
 import qualified Text.ParserCombinators.Parsec.Token as Tok
@@ -6,6 +6,8 @@ import Text.ParserCombinators.Parsec.Language
 import Text.ParserCombinators.Parsec.Expr
 import Control.Applicative
 import Data.Functor
+import qualified Control.Monad.State as St
+import Data.Map
 
 type Ident = String
 type Block = [Stmt]
@@ -16,15 +18,12 @@ data Stmt =   DeclVar Ident
 			| DeclProc Ident FunctArgs Block 
 			| Assign Ident AExpr
 			| CallProc Ident [AExpr]
+			| ControlIf BExpr Block Block
 			| Return AExpr
 	deriving Show
 
 
 data AExpr = Negate AExpr 
-			{-| Add AExpr AExpr-}
-			{-| Mult AExpr AExpr -}
-			{-| Div AExpr AExpr-}
-			{-| Minus AExpr AExpr-}
 			| BinAOp BinAOp AExpr AExpr
 			| Var Ident
 			| Val Integer 
@@ -68,11 +67,13 @@ dymanikStyle = emptyDef {
 		commentLine = "//",
 		identStart = letter,
 		identLetter = alphaNum <|> char '_',
-		reservedOpNames = ["+","-","/","*","=","&&","||","<",">","<=",">=","==","!==","!"],
+		reservedOpNames = ["+","-","/","*","=","&&","||","<",">","<=",">=","==","!==","!", ":"],
 		reservedNames = [
 					"function",
 					"return",
 					"proc",
+					"if",
+					"else",
 					"var"
 					]
 		}
@@ -97,6 +98,8 @@ stmts = many stmt
 
 stmt =  declFunct
 	<|> declProc
+	<|> funReturn
+	<|> controlIf
 	<|> (declVar
 	<|> (identifier >>=( \x-> CallProc x <$> parens args <|> (Assign x <$> (reservedOp "=" *> aexpr)))) 
 	) <* semi
@@ -109,7 +112,7 @@ funReturn = Return <$> (reserved "return" *> aexpr <* semi)
 declVar =  DeclVar <$> (reserved "var" *> identifier) 
 
 --Function Declaration
-declFunct = DeclFunct <$> (reserved "function" *> identifier) <*> parens functdeclargs <*> braces funstmts
+declFunct = DeclFunct <$> (reserved "function" *> identifier) <*> parens functdeclargs <*> braces stmts
 
 declProc = DeclProc <$> (reserved "proc" *> identifier) <*> parens functdeclargs <*> braces stmts
 
@@ -120,6 +123,9 @@ assign = Assign <$> identifier <*> (reservedOp "=" *> aexpr)
 callProc = CallProc <$> identifier <*> parens args 
 
 args = commaSep aexpr
+
+
+controlIf = ControlIf <$> (reserved "if" *> parens bexpr) <*> braces stmts <*> (reserved "else" *> braces stmts <|> return [])
 
 --Expresion Parsers
 
@@ -162,3 +168,51 @@ relation  = reservedOp "<" *> return LessT
 		<|> reservedOp ">=" *> return GreaterTE
 		<|> reservedOp ">" *> return GreaterT
 
+
+--------------evaluation---------
+
+
+data SymbolVal = SymInt Integer 
+			
+
+
+eval :: St.State [Map String symbolVal] Int -> [stmt]
+eval  s = undefined
+
+
+{-
+ -data BExpr = Or BExpr BExpr
+ -            | And BExpr BExpr
+ -            | Comp Rel AExpr AExpr
+ -            | Not BExpr
+ -            | ValB Bool
+ -    deriving Show
+ -}
+
+
+evalBool ::  BExpr -> Bool
+evalBool (ValB x) = x
+evalBool (Or a b) = evalBool a || evalBool b
+evalBool (And a b) = evalBool a && evalBool b
+evalBool (Not a) = not $ evalBool a
+evalBool (Comp r a b) = (compare r)(evalExpr a) ( evalExpr b)
+			where
+				compare LessT = (<)
+				compare LessTE = (<=)
+				compare GreaterTE = (>=)
+				compare GreaterT = (>)
+				compare Equals = (==)
+				compare NEquals = (/=)
+	
+evalExpr :: AExpr -> Integer
+evalExpr (Val n) = n
+evalExpr (Negate a) = -(evalExpr a)
+evalExpr (Var n) = undefined
+evalExpr (CallFunct n args)  = undefined
+evalExpr (BinAOp op a b) = (oper op) (evalExpr a) (evalExpr b)
+			where
+				oper Add = (+)
+				oper Mult = (*)
+				oper Div = div
+				oper Minus = (-)
+				oper Mod = mod
