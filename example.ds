@@ -1,19 +1,19 @@
-var a;
-function asdf(){
+var a:int;
+proc asdf(){
 }
 /* comentarios
 asdfasd
 
 s
 */
-var b;
+var b:int;
 
 // cometario
 
 if (true){
-	var tue;
+	var tue:int;
 }else {
-	var f;
+	var f:int;
 }
 
 if (3<5 && true){
@@ -28,19 +28,24 @@ function fun(){
 	print a;
 }
 */
-a=0x90;
-a=090; 
-a=90+1-3*5/5;
-function funA(a){
-	print(b);
+var a:int;
+a=1;
+function funA(){
+	print (a);
 	return a;
 }
+a=0;
+
+funA();
 
 
-function funB(b){
-	var b;
+
+
+
+function funB(b:int){
+	var b:int;
 	b(a,b);
-	var a;
+	var a:int;
 	function funC(){
 		print(a);
 	}

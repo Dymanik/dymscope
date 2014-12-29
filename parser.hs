@@ -10,10 +10,13 @@ import qualified Control.Monad.State as St
 import Data.Map
 
 type Ident = String
-type Block = [Stmt]
-type FunctArgs = [String]
+--type Block = [Stmt]
+type FunctArgs = [(Ident,Type)]
 
-data Stmt =   DeclVar Ident
+newtype Block = Block [Stmt]
+		deriving Show
+
+data Stmt =   DeclVar Ident Type
 			| DeclFunct Ident FunctArgs Block 
 			| DeclProc Ident FunctArgs Block 
 			| Assign Ident AExpr
@@ -22,6 +25,14 @@ data Stmt =   DeclVar Ident
 			| Return AExpr
 	deriving Show
 
+type Type = String
+{-
+ -data Type =   TInt
+ -            | TFunc
+ -            | TProc
+ -            | TBool
+ -        deriving Show
+ -}
 
 data AExpr = Negate AExpr 
 			| BinAOp BinAOp AExpr AExpr
@@ -74,7 +85,8 @@ dymanikStyle = emptyDef {
 					"proc",
 					"if",
 					"else",
-					"var"
+					"var",
+					"int"
 					]
 		}
 
@@ -94,7 +106,7 @@ whiteSpace = Tok.whiteSpace lexer
 --
 prog = whiteSpace *> manyTill stmt eof
 
-stmts = many stmt
+stmts = Block <$> many stmt
 
 stmt =  declFunct
 	<|> declProc
@@ -109,14 +121,26 @@ funstmts = many (funReturn <|> stmt)
 funReturn = Return <$> (reserved "return" *> aexpr <* semi)
 
 --Variable Declaration
-declVar =  DeclVar <$> (reserved "var" *> identifier) 
+declVar =  DeclVar <$> (reserved "var" *> identifier) <*> (reservedOp ":" *> varType)
+
+varType = (reserved "int" *> return "int")
+		<|> (reserved "proc" *> return "proc")
+		<|> (reserved "function" *> return "function")
+
+	
 
 --Function Declaration
 declFunct = DeclFunct <$> (reserved "function" *> identifier) <*> parens functdeclargs <*> braces stmts
 
 declProc = DeclProc <$> (reserved "proc" *> identifier) <*> parens functdeclargs <*> braces stmts
 
-functdeclargs = commaSep identifier
+{-
+ -functdeclargs = commaSep identifier
+ -}
+
+functdeclargs = commaSep (pair <$> identifier <*> (reservedOp ":" *> varType))
+		where
+			pair a b = (a,b)
 
 assign = Assign <$> identifier <*> (reservedOp "=" *> aexpr)
 
@@ -125,7 +149,7 @@ callProc = CallProc <$> identifier <*> parens args
 args = commaSep aexpr
 
 
-controlIf = ControlIf <$> (reserved "if" *> parens bexpr) <*> braces stmts <*> (reserved "else" *> braces stmts <|> return [])
+controlIf = ControlIf <$> (reserved "if" *> parens bexpr) <*> braces stmts <*> (reserved "else" *> braces stmts <|> Block <$> return [])
 
 --Expresion Parsers
 
@@ -158,7 +182,6 @@ bterm = parens bexpr
 	<|> (reserved "false" >> return (ValB False))
 	<|> rterm
 
-
 rterm = flip Comp <$> aexpr <*> relation <*> aexpr
 
 relation  = reservedOp "<" *> return LessT
@@ -169,33 +192,59 @@ relation  = reservedOp "<" *> return LessT
 		<|> reservedOp ">" *> return GreaterT
 
 
---------------evaluation---------
+--------------evaluation (dynamic scope)--------
+
+newtype ScopedBlock = ScopedBlock [Stmt]
+				deriving Show
+
+data SymbolValue = Funstmts Block
+				| Value Integer
+				| Unitialized
+			deriving Show
+
+type SymbolTable = Map String SymbolValue
+
+data SymbolTable' = SymbolTable' {
+						symTableValues ::Map String SymbolValue,
+						symTableName ::String,
+						symTableLexicalParent :: String
+					}
 
 
-data SymbolVal = SymInt Integer 
-			
+data Environment = Environment {envStack :: [SymbolTable],
+					envScope :: Integer
+					}
 
+{-insertSymbol :: (Ord k, St.MonadState [Map k a] m) => k -> a -> m ()-}
+insertSymbol ::  String -> SymbolValue -> St.State [SymbolTable] ()
+insertSymbol a b = St.modify (\(x:xs) -> insert a b x :xs)
 
-eval :: St.State [Map String symbolVal] Int -> [stmt]
-eval  s = undefined
+enterScope :: St.State [SymbolTable] ()
+enterScope = St.modify ((:) (Data.Map.empty))
 
+exitScope :: St.State [SymbolTable]  ()
+exitScope = St.modify (tail)
+
+eval :: Stmt -> St.State [SymbolTable] Integer
+eval (DeclVar a _) = insertSymbol ("v|"++a) Unitialized >> return 0
+eval (DeclFunct ident args block ) = undefined 
+eval (DeclProc ident functArgs block ) = undefined
+eval (Assign ident aExpr) = undefined
+eval (CallProc ident [aExpr]) = undefined
+eval (ControlIf bExpr b belse) = undefined
+eval (Return  a) = return $ evalExpr a
 
 {-
- -data BExpr = Or BExpr BExpr
- -            | And BExpr BExpr
- -            | Comp Rel AExpr AExpr
- -            | Not BExpr
- -            | ValB Bool
- -    deriving Show
+ -evalBlock :: Block -> St.State [SymbolTable] Integer
+ -evalBlock (Block xs) = 
  -}
-
 
 evalBool ::  BExpr -> Bool
 evalBool (ValB x) = x
 evalBool (Or a b) = evalBool a || evalBool b
 evalBool (And a b) = evalBool a && evalBool b
 evalBool (Not a) = not $ evalBool a
-evalBool (Comp r a b) = (compare r)(evalExpr a) ( evalExpr b)
+evalBool (Comp r a b) = (compare r) (evalExpr a) ( evalExpr b)
 			where
 				compare LessT = (<)
 				compare LessTE = (<=)
@@ -204,7 +253,7 @@ evalBool (Comp r a b) = (compare r)(evalExpr a) ( evalExpr b)
 				compare Equals = (==)
 				compare NEquals = (/=)
 	
-evalExpr :: AExpr -> Integer
+evalExpr ::  AExpr -> Integer
 evalExpr (Val n) = n
 evalExpr (Negate a) = -(evalExpr a)
 evalExpr (Var n) = undefined
