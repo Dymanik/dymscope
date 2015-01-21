@@ -7,7 +7,10 @@ import Text.ParserCombinators.Parsec.Expr
 import Control.Applicative
 import Data.Functor
 import qualified Control.Monad.State as St
-import Data.Map
+import qualified Control.Monad.RWS as RWS
+import Data.Map as Map
+import Data.Maybe
+import Control.Monad
 
 type Ident = String
 --type Block = [Stmt]
@@ -22,7 +25,7 @@ data Stmt =   DeclVar Ident Type
 			| Assign Ident AExpr
 			| CallProc Ident [AExpr]
 			| ControlIf BExpr Block Block
-			| Return AExpr
+			| Return (Maybe AExpr)
 	deriving Show
 
 type Type = String
@@ -118,7 +121,7 @@ stmt =  declFunct
 
 funstmts = many (funReturn <|> stmt)
 
-funReturn = Return <$> (reserved "return" *> aexpr <* semi)
+funReturn = Return <$> (reserved "return" *> optionMaybe aexpr <* semi)
 
 --Variable Declaration
 declVar =  DeclVar <$> (reserved "var" *> identifier) <*> (reservedOp ":" *> varType)
@@ -194,57 +197,97 @@ relation  = reservedOp "<" *> return LessT
 
 --------------evaluation (dynamic scope)--------
 
-newtype ScopedBlock = ScopedBlock [Stmt]
+data SymbolTable = SymbolTable {
+					symtableValues :: Map String (Type,SymbolValue),
+					symtableEnv :: Maybe [SymbolTable],
+					symtableName :: String,
+					symtableLexicalParent :: String
+				}
 				deriving Show
 
-data SymbolValue = Funstmts Block
-				| Value Integer
-				| Unitialized
-			deriving Show
+data SymbolValue =	Uninitialized
+				|	ValInt Integer
+				|	ValFun FunctArgs Block (Maybe [SymbolTable])
+				|	Void
+				|	Exit
+				deriving Show
 
-type SymbolTable = Map String SymbolValue
-
-data SymbolTable' = SymbolTable' {
-						symTableValues ::Map String SymbolValue,
-						symTableName ::String,
-						symTableLexicalParent :: String
-					}
-
-
-data Environment = Environment {envStack :: [SymbolTable],
+data Environment = Environment {
+					envStack :: [SymbolTable],
+					envCallStack  :: [(String,[SymbolTable])],
 					envScope :: Integer
+				}			
+				deriving Show
+
+data ScopeConfig = ScopeConfig {
+						deepBinding :: Bool,
+						lookupScope :: String-> RWS.RWS ScopeConfig [String] Environment SymbolValue,
+						assignScope	:: String->SymbolValue -> RWS.RWS ScopeConfig [String] Environment SymbolValue
+				}
+
+
+dynShallowScop = ScopeConfig False lookupDyn assignDyn
+dynDeepScop = ScopeConfig True lookupDyn assignDyn
+staticShallowScop = ScopeConfig False lookupDyn assignDyn
+staticDeepScop = ScopeConfig True lookupDyn assignDyn
+
+lookupDyn = undefined
+assignDyn = undefined
+lookupStatic = undefined
+assignStatic = undefined
+
+{-emptySymtable ::  String -> String -> SymbolTable-}
+emptySymtable =  SymbolTable Map.empty 
+
+
+insertSymbol name val = do{
+						env<-St.get;
+						let x = insert' name val (envStack env) in
+						St.put $ env{envStack=x}
 					}
+			where
+				insert' a b (x:xs) = x{symtableValues=insert a b (symtableValues x)} : xs
 
-{-insertSymbol :: (Ord k, St.MonadState [Map k a] m) => k -> a -> m ()-}
-insertSymbol ::  String -> SymbolValue -> St.State [SymbolTable] ()
-insertSymbol a b = St.modify (\(x:xs) -> insert a b x :xs)
+assignSymbol name val = RWS.asks assignScope >>= (\f -> f name val)
 
-enterScope :: St.State [SymbolTable] ()
-enterScope = St.modify ((:) (Data.Map.empty))
 
-exitScope :: St.State [SymbolTable]  ()
-exitScope = St.modify (tail)
+newEnvironment = Environment [emptySymtable Nothing "Global" ""] [("",[])] 0
 
-eval :: Stmt -> St.State [SymbolTable] Integer
-eval (DeclVar a _) = insertSymbol ("v|"++a) Unitialized >> return 0
-eval (DeclFunct ident args block ) = undefined 
-eval (DeclProc ident functArgs block ) = undefined
-eval (Assign ident aExpr) = undefined
-eval (CallProc ident [aExpr]) = undefined
-eval (ControlIf bExpr b belse) = undefined
-eval (Return  a) = return $ evalExpr a
+evalProg ::  Stmt -> ScopeConfig -> (SymbolValue, Environment,[String])
+evalProg block conf = RWS.runRWS (eval block) conf newEnvironment
 
-{-
- -evalBlock :: Block -> St.State [SymbolTable] Integer
- -evalBlock (Block xs) = 
- -}
+eval :: Stmt -> RWS.RWS ScopeConfig [String]  Environment SymbolValue
+eval (DeclVar name typ) = insertSymbol name (typ,Uninitialized) >> return Void
+eval (DeclFunct name args block) = insertSymbol name ("funct", ValFun args block Nothing) >>  return Void
+eval (DeclProc name args block) = insertSymbol name ("proc",ValFun args block Nothing ) >> return Void
+eval (Assign name expr) = evalExpr expr >>= assignSymbol name >>return Void
+eval (CallProc name args) = RWS.asks lookupScope >>=
+									(\f-> f name) >>= 
+										(\x -> case x of
+											ValFun fargs block env -> insertArgs fargs <$> mapM evalExpr args >> evalBlock block
+											otherwise -> error "Expected Procedure"
+										)
+						where
+							insertArgs :: [(Ident,Type)] -> [SymbolValue] -> RWS.RWS ScopeConfig [String]  Environment [()]
+							insertArgs = zipWithM (\(n,t) v-> insertSymbol n (t,v))
+eval (ControlIf cond tblock fblock) = do
+									x <- evalBool cond;
+									if x then evalBlock tblock else evalBlock fblock
+eval (Return a) =maybe (return Exit)  evalExpr a
 
-evalBool ::  BExpr -> Bool
-evalBool (ValB x) = x
-evalBool (Or a b) = evalBool a || evalBool b
-evalBool (And a b) = evalBool a && evalBool b
-evalBool (Not a) = not $ evalBool a
-evalBool (Comp r a b) = (compare r) (evalExpr a) ( evalExpr b)
+{-evalBlock :: Block -> RWS.RWS Integer [String] Environment Integer-}
+evalBlock (Block b) = eval' b
+		where
+			eval' [] = return Void
+			eval' (x:xs) = eval x >>=(\ret -> case ret of
+					 								Void -> eval' xs
+													otherwise -> return ret)
+
+evalBool (ValB x) = return x
+evalBool (Or a b) = (||) <$> evalBool a <*> evalBool b
+evalBool (And a b) = (&&) <$> evalBool a <*> evalBool b
+evalBool (Not a) = not <$> evalBool a
+evalBool (Comp r a b) = operBinValInt (compare r) <$> evalExpr a <*> evalExpr b
 			where
 				compare LessT = (<)
 				compare LessTE = (<=)
@@ -253,15 +296,36 @@ evalBool (Comp r a b) = (compare r) (evalExpr a) ( evalExpr b)
 				compare Equals = (==)
 				compare NEquals = (/=)
 	
-evalExpr ::  AExpr -> Integer
-evalExpr (Val n) = n
-evalExpr (Negate a) = -(evalExpr a)
-evalExpr (Var n) = undefined
+evalExpr (Val n) = return $ ValInt n
+evalExpr (Negate a) = operValInt negate <$> evalExpr a
+evalExpr (Var n) =do{
+					x <- lookupDynShallow n;
+					case x of
+						("int",x) -> return x
+						(_,Uninitialized) -> error (n++" is undefined")
+						otherwise -> error "wrongtype: expected int"
+					}
 evalExpr (CallFunct n args)  = undefined
-evalExpr (BinAOp op a b) = (oper op) (evalExpr a) (evalExpr b)
+evalExpr (BinAOp op a b) = ValInt <$> (operBinValInt ( oper op) <$> evalExpr a <*>  evalExpr b)
 			where
 				oper Add = (+)
 				oper Mult = (*)
 				oper Div = div
 				oper Minus = (-)
 				oper Mod = mod
+
+lookupDynShallow name = (find name . envStack) <$> St.get
+			where
+				find name (x:xs) = fromMaybe (find name xs) (Map.lookup name (symtableValues x))
+
+
+operValInt f (ValInt x) = ValInt (f x)
+
+operBinValInt f (ValInt x) (ValInt y)= f x y
+
+{-
+ -assignDynShallow name val = (find name . envStack) <$> St.get
+ -                where 
+ -                    find name (x:xs) = maybe (x:find name xs) (\s-> update s val :xs) (Map.lookup name (symtableValues x))
+ -                    update ("int",_)  = 
+ -}

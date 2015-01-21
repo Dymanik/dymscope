@@ -1,0 +1,21 @@
+var a:int;
+
+a=0;
+
+proc funa(){
+	print(a);
+	a=3;
+}
+
+proc funb(x:proc){
+	funa();
+	proc funa(){
+		print(a);
+	}
+	a=4;
+	x();
+	funa();
+}
+a= -(1+ -3);
+funb(funa);
+funb(funa);

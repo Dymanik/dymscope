@@ -7,13 +7,13 @@ asdfasd
 s
 */
 var b:int;
-
+var f:int;
 // cometario
 
 if (true){
 	var tue:int;
 }else {
-	var f:int;
+	f=2;
 }
 
 if (3<5 && true){
@@ -21,6 +21,8 @@ if (3<5 && true){
 }
 
 function fun(){
+	f=3;
+	zxc=2342;
 	return 1;
 }
 
