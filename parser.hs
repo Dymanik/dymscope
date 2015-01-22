@@ -221,20 +221,54 @@ data Environment = Environment {
 
 data ScopeConfig = ScopeConfig {
 						deepBinding :: Bool,
-						lookupScope :: String-> RWS.RWS ScopeConfig [String] Environment SymbolValue,
-						assignScope	:: String->SymbolValue -> RWS.RWS ScopeConfig [String] Environment SymbolValue
+						lookupScope :: String-> RWS.RWS ScopeConfig [String] Environment (Maybe (Type,SymbolValue)),
+						assignScope	:: String->SymbolValue -> RWS.RWS ScopeConfig [String] Environment ()
 				}
 
 
-dynShallowScop = ScopeConfig False lookupDyn assignDyn
-dynDeepScop = ScopeConfig True lookupDyn assignDyn
-staticShallowScop = ScopeConfig False lookupDyn assignDyn
-staticDeepScop = ScopeConfig True lookupDyn assignDyn
+dynShallowScope ::  ScopeConfig
+dynShallowScope = ScopeConfig False lookupDyn assignDyn
 
-lookupDyn = undefined
+dynDeepScope ::  ScopeConfig
+dynDeepScope = ScopeConfig True lookupDyn assignDyn
+
+staticShallowScope ::  ScopeConfig
+staticShallowScope = ScopeConfig False lookupDyn assignDyn
+
+staticDeepScope ::  ScopeConfig
+staticDeepScope = ScopeConfig True lookupDyn assignDyn
+
+{- dinamic scopes -}
+lookupDyn name = RWS.asks deepBinding >>= (\x -> if x
+					then findDeep name <$> RWS.gets envStack 
+					else find name <$> RWS.gets envStack
+				)
+				where
+					findDeep _ [] = Nothing
+					findDeep name (x:xs) = Map.lookup name (symtableValues x) `mplus` maybe	(findDeep name xs) (findDeep name) (symtableEnv x)
+					find _ [] = Nothing 
+					find name (x:xs) = Map.lookup name (symtableValues x) `mplus` find name xs
 assignDyn = undefined
-lookupStatic = undefined
-assignStatic = undefined
+
+
+{- static scope -}
+lookupStatic name = RWS.asks deepBinding >>= \x-> if x
+						then findDeep name <$> RWS.gets envStack
+						else find name <$> RWS.gets envStack
+					where
+						findDeep _  [] = Nothing
+
+						findDeep name (x:xs) = Map.lookup name (symtableValues x) `mplus` maybe (findDeep name (dropWhile (\n-> symtableName n /= symtableLexicalParent x) xs)) (findDeep name) (symtableEnv x) 
+
+						find _ [] =Nothing
+						find name (x:xs) = Map.lookup name (symtableValues x) `mplus` find name (dropWhile	(\n-> symtableName n /= symtableLexicalParent x) xs)
+
+assignStatic  = undefined
+
+
+lookupDynShallow name = (find name . envStack) <$> St.get
+			where
+				find name (x:xs) = fromMaybe (find name xs) (Map.lookup name (symtableValues x))
 
 {-emptySymtable ::  String -> String -> SymbolTable-}
 emptySymtable =  SymbolTable Map.empty 
@@ -262,9 +296,9 @@ eval (DeclFunct name args block) = insertSymbol name ("funct", ValFun args block
 eval (DeclProc name args block) = insertSymbol name ("proc",ValFun args block Nothing ) >> return Void
 eval (Assign name expr) = evalExpr expr >>= assignSymbol name >>return Void
 eval (CallProc name args) = RWS.asks lookupScope >>=
-									(\f-> f name) >>= 
+									(\f-> fromMaybe (error "Error: name not found") <$> f name) >>= 
 										(\x -> case x of
-											ValFun fargs block env -> insertArgs fargs <$> mapM evalExpr args >> evalBlock block
+											("proc",ValFun fargs block env) -> insertArgs fargs <$> mapM evalExpr args >> evalBlock block
 											otherwise -> error "Expected Procedure"
 										)
 						where
@@ -299,8 +333,8 @@ evalBool (Comp r a b) = operBinValInt (compare r) <$> evalExpr a <*> evalExpr b
 evalExpr (Val n) = return $ ValInt n
 evalExpr (Negate a) = operValInt negate <$> evalExpr a
 evalExpr (Var n) =do{
-					x <- lookupDynShallow n;
-					case x of
+					x <- RWS.asks (lookupScope) >>= (\f -> f n);
+					case fromJust x of
 						("int",x) -> return x
 						(_,Uninitialized) -> error (n++" is undefined")
 						otherwise -> error "wrongtype: expected int"
@@ -314,13 +348,11 @@ evalExpr (BinAOp op a b) = ValInt <$> (operBinValInt ( oper op) <$> evalExpr a <
 				oper Minus = (-)
 				oper Mod = mod
 
-lookupDynShallow name = (find name . envStack) <$> St.get
-			where
-				find name (x:xs) = fromMaybe (find name xs) (Map.lookup name (symtableValues x))
 
-
+operValInt ::  (Integer -> Integer) -> SymbolValue -> SymbolValue
 operValInt f (ValInt x) = ValInt (f x)
 
+operBinValInt :: (Integer -> Integer -> t) -> SymbolValue -> SymbolValue -> t
 operBinValInt f (ValInt x) (ValInt y)= f x y
 
 {-
