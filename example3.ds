@@ -1,0 +1,7 @@
+var a:int;
+a=4;
+function f(a:int){
+	a=a;
+}
+
+f(a);
