@@ -4,12 +4,13 @@ import Text.ParserCombinators.Parsec hiding ((<|>), many)
 import qualified Text.ParserCombinators.Parsec.Token as Tok
 import Text.ParserCombinators.Parsec.Language
 import Text.ParserCombinators.Parsec.Expr
-import Control.Applicative
 import Data.Functor
-import qualified Control.Monad.State as St
-import qualified Control.Monad.RWS as RWS
 import Data.Map as Map
 import Data.Maybe
+import Data.Foldable
+import Control.Applicative
+import qualified Control.Monad.State as St
+import qualified Control.Monad.RWS as RWS
 import Control.Monad
 import Debug.Trace
 
@@ -200,7 +201,7 @@ relation  = reservedOp "<" *> return LessT
 
 data SymbolTable = SymbolTable {
 					symtableValues :: Map String (Type,SymbolValue),
-					symtableEnv :: Maybe [SymbolTable],
+					symtableEnv :: Maybe (Map String (Type,SymbolValue)),
 					symtableName :: String,
 					symtableLexicalParent :: String
 				}
@@ -208,7 +209,7 @@ data SymbolTable = SymbolTable {
 
 data SymbolValue =	Uninitialized
 				|	ValInt Integer
-				|	ValFun FunctArgs Block String (Maybe [SymbolTable])
+				|	ValFun FunctArgs Block String (Maybe (Map String (Type,SymbolValue)))
 				|	Void
 				|	Exit
 				deriving Show
@@ -239,6 +240,16 @@ staticShallowScope = ScopeConfig False lookupDyn assignDyn
 staticDeepScope ::  ScopeConfig
 staticDeepScope = ScopeConfig True lookupDyn assignDyn
 
+checktype :: (Type,SymbolValue) -> (Type,SymbolValue) -> Bool
+checktype (t1,_) (t2,_) = t1 == t2
+
+staticChain :: [SymbolTable] -> [SymbolTable]
+staticChain [] = []
+staticChain (x:xs) = x : f xs
+				where 
+					f xs 	= staticChain $ dropWhile (\n-> symtableName n /= symtableLexicalParent x) xs 
+
+
 {- dinamic scopes -}
 lookupDyn name = RWS.asks deepBinding >>= (\x -> if x
 					then findDeep name <$> RWS.gets envStack 
@@ -246,22 +257,25 @@ lookupDyn name = RWS.asks deepBinding >>= (\x -> if x
 				)
 				where
 					findDeep _ [] = Nothing
-					findDeep name (x:xs) = Map.lookup name (symtableValues x) `mplus` maybe	(findDeep name xs) (findDeep name) (symtableEnv x)
+					findDeep name (x:xs) = Map.lookup name (symtableValues x) `mplus` maybe	(findDeep name xs) (Map.lookup name) (symtableEnv x)
 					find _ [] = Nothing 
 					find name (x:xs) = Map.lookup name (symtableValues x) `mplus` find name xs
 
 assignDyn name value  = RWS.asks deepBinding >>= (\x -> if x
-					then undefined {-assign name value <$>  RWS.gets envStack >>= RWS.put-}
+					then RWS.modify (\x -> x{envStack=assignDeep name value $ envStack x})
 					else RWS.modify (\x -> x{envStack=assign name value $envStack x})
 				)
 				where
+					assignDeep n _ [] = error (n++" variable not in scope")
+					assignDeep n v (x:xs) = case assign' n v (symtableValues x) of 
+									(Nothing,_) -> x{symtableEnv=(snd .assign' n v) <$>symtableEnv x} : assignDeep n v xs
+									(Just _, m) -> x{symtableValues=m}:xs
 					assign n _ [] = error (n++" variable not in scope")
-					assign n v (x:xs) = case insertLookupWithKey (\_ a old -> if checktype a old then a else error ("expected "++ fst old ++ " got " ++ fst a)) n v (symtableValues x) of 
+					assign n v (x:xs) = case assign' n v (symtableValues x) of 
 									(Nothing,_) -> x:assign n v xs
 									(Just _,m) -> x{symtableValues=m}:xs
+					assign' = insertLookupWithKey (\_ a old -> if checktype a old then a else error ("expected" ++ fst old ++ " got " ++ fst a))
 
-checktype :: (Type,SymbolValue) -> (Type,SymbolValue) -> Bool
-checktype (t1,_) (t2,_) = t1 == t2
 
 {- static scope -}
 lookupStatic name = RWS.asks deepBinding >>= \x-> if x
@@ -270,21 +284,36 @@ lookupStatic name = RWS.asks deepBinding >>= \x-> if x
 					where
 						findDeep _  [] = Nothing
 
-						findDeep name (x:xs) = Map.lookup name (symtableValues x) `mplus` maybe (findDeep name (dropWhile (\n-> symtableName n /= symtableLexicalParent x) xs)) (findDeep name) (symtableEnv x) 
+						findDeep name (x:xs) = Map.lookup name (symtableValues x) `mplus` maybe (findDeep name (dropWhile (\n-> symtableName n /= symtableLexicalParent x) xs)) (Map.lookup name) (symtableEnv x) 
 
 						find _ [] =Nothing
 						find name (x:xs) = Map.lookup name (symtableValues x) `mplus` find name (dropWhile	(\n-> symtableName n /= symtableLexicalParent x) xs)
 
-assignStatic  = undefined
+assignStatic name value  = RWS.asks deepBinding >>= \x -> if x
+						then RWS.modify (\x -> x{envStack=assignDeep name value $ envStack x})
+						else RWS.modify (\x -> x{envStack=assign name value $ envStack x})
+					where
+						assignDeep n _ [] =[]
+						assignDeep n v (x:xs) = case assign' n v (symtableValues x) of
+									(Nothing,_)	-> x{symtableEnv=(snd.assign' n v) <$> symtableEnv x}: next (assignDeep n v) (symtableLexicalParent x) xs
+									(Just _,m)	-> x{symtableValues=m}:xs
+						assign n _ [] = []
+						assign n v (x:xs) = case assign' n v (symtableValues x) of
+									(Nothing,_)	-> x : next (assign n v) (symtableLexicalParent x) xs
+									(Just _,m)	-> x{symtableValues=m}:xs
+						assign' = insertLookupWithKey (\_ a old -> if checktype a old then a else error ("expected" ++ fst old ++ " got " ++ fst a))
+						next f p  = f' . span (\n -> symtableName n /= p)
+								where
+									f' (x,y) = x++ f y
 
 
 {-emptySymtable ::  String -> String -> SymbolTable-}
-emptySymtable :: Maybe [SymbolTable] -> String -> String -> SymbolTable
+emptySymtable :: Maybe (Map String (Type,SymbolValue)) -> String -> String -> SymbolTable
 emptySymtable =  SymbolTable Map.empty 
 
 newScope name parent env=newName >>=(\n ->  RWS.modify (\x -> x{envStack= emptySymtable env n parent : envStack x,envScope=1+envScope x}) )
 			where
-				newName = RWS.gets ((++name).show.envScope)
+				newName = RWS.gets (((name++"|")++).show.envScope)
 
 insertSymbol name val = do{
 						env<-St.get;
@@ -309,7 +338,7 @@ giveType Uninitialized = error "\n Variable is unitialized"
 newEnvironment = Environment [emptySymtable Nothing "Global" ""] [("",[])] 0
 
 evalProg ::  ScopeConfig -> [Stmt] -> (SymbolValue, Environment,[String])
-evalProg conf block = RWS.runRWS (evalBlock (Block block)) conf newEnvironment
+evalProg conf block = RWS.runRWS (evalBlock (Block block) "Global") conf newEnvironment
 
 eval :: Stmt -> RWS.RWS ScopeConfig [String]  Environment SymbolValue
 eval (DeclVar name typ) = insertSymbol name (typ,Uninitialized) >> return Void
@@ -319,7 +348,7 @@ eval (Assign name expr) = giveType <$> evalExpr expr >>= assignSymbol name >>ret
 eval (CallProc name args) = RWS.asks lookupScope >>=
 									(\f-> fromMaybe (error "Error: name not found") <$> f name) >>= 
 										(\x -> case x of
-											("funct",ValFun fargs block parent env) -> mapM evalExpr args >>= insertArgs parent fargs  >> evalBlock block >> return Void
+											("function",ValFun fargs block parent env) -> mapM evalExpr args >>= insertArgs parent fargs  >> evalBlock block name >> return Void
 											otherwise -> error "Expected Procedure"
 										)
 						where
@@ -327,11 +356,11 @@ eval (CallProc name args) = RWS.asks lookupScope >>=
 							insertArgs parent fargs args =  newScope (name++"|args") parent Nothing >>zipWithM (\(n,t) v-> insertSymbol n (t,v)) fargs args 
 eval (ControlIf cond tblock fblock) = do
 									x <- evalBool cond;
-									if x then evalBlock tblock else evalBlock fblock
+									if x then evalBlock tblock "ifTbranch" else evalBlock fblock "ifFbranch"
 eval (Return a) =maybe (return Exit)  evalExpr a
 
 {-evalBlock :: Block -> RWS.RWS Integer [String] Environment Integer-}
-evalBlock (Block b) = eval' b
+evalBlock (Block b) name = getCurrentStack >>= flip (newScope name) Nothing >> eval' b
 		where
 			eval' [] = return Void
 			eval' (x:xs) = eval x >>=(\ret -> case ret of
@@ -356,9 +385,8 @@ evalExpr (Negate a) = operValInt negate <$> evalExpr a
 evalExpr (Var n) =do{
 					x <- RWS.asks lookupScope >>= (\f -> f n);
 					case fromJust x of
-						(_,x) -> return x
 						(_,Uninitialized) -> error (n++" is undefined")
-						otherwise -> error "wrongtype: expected int"
+						(_,x) -> return x
 					}
 evalExpr (CallFunct n args)  = undefined
 evalExpr (BinAOp op a b) = ValInt <$> (operBinValInt ( oper op) <$> evalExpr a <*>  evalExpr b)
