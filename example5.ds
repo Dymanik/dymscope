@@ -1,0 +1,19 @@
+var a:int;
+
+a=5;
+
+
+proc g(){
+	print(a);
+}
+
+proc f(h:function){
+	a=8;
+	var a:int;
+	a=2;
+	h();
+	print(a);
+}
+
+f(g);
+print(a);

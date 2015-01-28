@@ -1,0 +1,17 @@
+var x:int;
+var y:int;
+x= -10;
+y=5+x;
+if (x>y){
+	var y:int;
+	y=3*x;
+
+	print(1);
+	print(x);
+}else{
+	print(0);
+	print(y);
+}
+print(y);
+
+

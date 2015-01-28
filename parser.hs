@@ -13,6 +13,7 @@ import qualified Control.Monad.State as St
 import qualified Control.Monad.RWS as RWS
 import Control.Monad
 import Debug.Trace
+import System.IO.Unsafe
 
 type Ident = String
 --type Block = [Stmt]
@@ -27,6 +28,7 @@ data Stmt =   DeclVar Ident Type
 			| Assign Ident AExpr
 			| CallProc Ident [AExpr]
 			| ControlIf BExpr Block Block
+			| CallPrint AExpr
 			| Return (Maybe AExpr)
 	deriving Show
 
@@ -91,7 +93,8 @@ dymanikStyle = emptyDef {
 					"if",
 					"else",
 					"var",
-					"int"
+					"int",
+					"print"
 					]
 		}
 
@@ -118,6 +121,7 @@ stmt =  declFunct
 	<|> funReturn
 	<|> controlIf
 	<|> (declVar
+	<|> callPrint
 	<|> (identifier >>=( \x-> CallProc x <$> parens args <|> (Assign x <$> (reservedOp "=" *> aexpr)))) 
 	) <* semi
 
@@ -151,6 +155,7 @@ assign = Assign <$> identifier <*> (reservedOp "=" *> aexpr)
 
 callProc = CallProc <$> identifier <*> parens args 
 
+callPrint = CallPrint <$> (reserved "print" *> parens aexpr)
 args = commaSep aexpr
 
 
@@ -223,22 +228,28 @@ data Environment = Environment {
 
 data ScopeConfig = ScopeConfig {
 						deepBinding :: Bool,
+						staticScoping :: Bool,
 						lookupScope :: String-> RWS.RWS ScopeConfig [String] Environment (Maybe (Type,SymbolValue)),
 						assignScope	:: String->(Type,SymbolValue) -> RWS.RWS ScopeConfig [String] Environment ()
 				}
 
 
+getBindings ::  RWS.RWS ScopeConfig [String]  Environment (Map String (Type,SymbolValue))
+getBindings =  RWS.asks (staticScoping) >>= \x-> if x
+				then Prelude.foldr (union . symtableValues) Map.empty <$>RWS.gets (staticChain .envStack)
+				else Prelude.foldr (union . symtableValues) Map.empty <$>RWS.gets envStack
+
 dynShallowScope ::  ScopeConfig
-dynShallowScope = ScopeConfig False lookupDyn assignDyn
+dynShallowScope = ScopeConfig False False lookupDyn assignDyn
 
 dynDeepScope ::  ScopeConfig
-dynDeepScope = ScopeConfig True lookupDyn assignDyn
+dynDeepScope = ScopeConfig True False lookupDyn assignDyn
 
 staticShallowScope ::  ScopeConfig
-staticShallowScope = ScopeConfig False lookupDyn assignDyn
+staticShallowScope = ScopeConfig False True lookupStatic assignStatic
 
 staticDeepScope ::  ScopeConfig
-staticDeepScope = ScopeConfig True lookupDyn assignDyn
+staticDeepScope = ScopeConfig True True lookupStatic assignStatic
 
 checktype :: (Type,SymbolValue) -> (Type,SymbolValue) -> Bool
 checktype (t1,_) (t2,_) = t1 == t2
@@ -247,7 +258,7 @@ staticChain :: [SymbolTable] -> [SymbolTable]
 staticChain [] = []
 staticChain (x:xs) = x : f xs
 				where 
-					f xs 	= staticChain $ dropWhile (\n-> symtableName n /= symtableLexicalParent x) xs 
+					f = staticChain . dropWhile (\n-> symtableName n /= symtableLexicalParent x)
 
 
 {- dinamic scopes -}
@@ -289,6 +300,7 @@ lookupStatic name = RWS.asks deepBinding >>= \x-> if x
 						find _ [] =Nothing
 						find name (x:xs) = Map.lookup name (symtableValues x) `mplus` find name (dropWhile	(\n-> symtableName n /= symtableLexicalParent x) xs)
 
+
 assignStatic name value  = RWS.asks deepBinding >>= \x -> if x
 						then RWS.modify (\x -> x{envStack=assignDeep name value $ envStack x})
 						else RWS.modify (\x -> x{envStack=assign name value $ envStack x})
@@ -315,13 +327,19 @@ newScope name parent env=newName >>=(\n ->  RWS.modify (\x -> x{envStack= emptyS
 			where
 				newName = RWS.gets (((name++"|")++).show.envScope)
 
+exitScope	= RWS.modify (\x -> x{envStack = tail $ envStack x})
+
 insertSymbol name val = do{
 						env<-St.get;
-						let x = insert' name val (envStack env) in
+						binding <- getBindings;
+						let x = insert' name (val' binding) (envStack env) in
 						St.put $ env{envStack=x}
 					}
 			where
 				insert' a b (x:xs) = x{symtableValues=insert a b (symtableValues x)} : xs
+				val' env  = case val of
+					(t,ValFun a b n _) -> (t,ValFun a b n (Just env))
+					otherwise -> val
 
 assignSymbol name val = RWS.asks assignScope >>= (\f -> f name val)
 
@@ -337,30 +355,34 @@ giveType Uninitialized = error "\n Variable is unitialized"
 
 newEnvironment = Environment [emptySymtable Nothing "Global" ""] [("",[])] 0
 
+printVal x = trace (show x) (return Void)
+
 evalProg ::  ScopeConfig -> [Stmt] -> (SymbolValue, Environment,[String])
 evalProg conf block = RWS.runRWS (evalBlock (Block block) "Global") conf newEnvironment
 
 eval :: Stmt -> RWS.RWS ScopeConfig [String]  Environment SymbolValue
+{-eval (CallPrint expr) = liftM (unsafePerformIO . print) (evalExpr expr)  >> return Void-}
+eval (CallPrint expr) = evalExpr expr >>= printVal
 eval (DeclVar name typ) = insertSymbol name (typ,Uninitialized) >> return Void
 eval (DeclFunct name args block) = getCurrentStack >>= (\x -> insertSymbol name ("function", ValFun args block x Nothing)) >>  return Void
 eval (DeclProc name args block) = getCurrentStack >>= (\x -> insertSymbol name ("function",ValFun args block x Nothing )) >> return Void
 eval (Assign name expr) = giveType <$> evalExpr expr >>= assignSymbol name >>return Void
 eval (CallProc name args) = RWS.asks lookupScope >>=
-									(\f-> fromMaybe (error "Error: name not found") <$> f name) >>= 
+									(\f-> fromMaybe (error $"Error: name not found "++name) <$> f name) >>= 
 										(\x -> case x of
-											("function",ValFun fargs block parent env) -> mapM evalExpr args >>= insertArgs parent fargs  >> evalBlock block name >> return Void
+											("function",ValFun fargs block parent env) -> mapM evalExpr args >>= insertArgs parent fargs env  >> evalBlock block name >> exitScope >> return Void
 											otherwise -> error "Expected Procedure"
 										)
 						where
-							insertArgs ::String -> [(Ident,Type)] -> [SymbolValue] -> RWS.RWS ScopeConfig [String]  Environment [()]
-							insertArgs parent fargs args =  newScope (name++"|args") parent Nothing >>zipWithM (\(n,t) v-> insertSymbol n (t,v)) fargs args 
+							{-insertArgs ::String -> [(Ident,Type)] -> [SymbolValue] -> RWS.RWS ScopeConfig [String]  Environment [()]-}
+							insertArgs parent fargs env args = newScope (name++"|args") parent env >>zipWithM (\(n,t) v-> insertSymbol n (t,v)) fargs args 
 eval (ControlIf cond tblock fblock) = do
 									x <- evalBool cond;
 									if x then evalBlock tblock "ifTbranch" else evalBlock fblock "ifFbranch"
 eval (Return a) =maybe (return Exit)  evalExpr a
 
 {-evalBlock :: Block -> RWS.RWS Integer [String] Environment Integer-}
-evalBlock (Block b) name = getCurrentStack >>= flip (newScope name) Nothing >> eval' b
+evalBlock (Block b) name =  getCurrentStack >>= flip (newScope name) Nothing >> eval' b >>= (\x-> exitScope >> return x)
 		where
 			eval' [] = return Void
 			eval' (x:xs) = eval x >>=(\ret -> case ret of
@@ -385,10 +407,10 @@ evalExpr (Negate a) = operValInt negate <$> evalExpr a
 evalExpr (Var n) =do{
 					x <- RWS.asks lookupScope >>= (\f -> f n);
 					case fromJust x of
-						(_,Uninitialized) -> error (n++" is undefined")
+						(_,Uninitialized) -> error (n++" is uninitialized")
 						(_,x) -> return x
 					}
-evalExpr (CallFunct n args)  = undefined
+evalExpr (CallFunct n args)  = eval (CallProc n args)
 evalExpr (BinAOp op a b) = ValInt <$> (operBinValInt ( oper op) <$> evalExpr a <*>  evalExpr b)
 			where
 				oper Add = (+)
@@ -404,9 +426,9 @@ operValInt f (ValInt x) = ValInt (f x)
 operBinValInt :: (Integer -> Integer -> t) -> SymbolValue -> SymbolValue -> t
 operBinValInt f (ValInt x) (ValInt y)= f x y
 
-{-
- -assignDynShallow name val = (find name . envStack) <$> St.get
- -                where 
- -                    find name (x:xs) = maybe (x:find name xs) (\s-> update s val :xs) (Map.lookup name (symtableValues x))
- -                    update ("int",_)  = 
- -}
+
+
+{- debugging -}
+
+printEnv :: RWS.RWS ScopeConfig [String] Environment SymbolValue
+printEnv = (\x -> trace (show x) Void) <$> RWS.get

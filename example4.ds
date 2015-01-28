@@ -1,5 +1,17 @@
-var a:function;
+var a:int;
+a=3;
+print(a);
 
-function f(){
-}
-a=f;
+print (a+5);
+if (true) {
+print (5);
+	if(true){
+		var b:int;
+		b=5;
+		a=3;
+		if(true){
+print(b);
+			print(a);
+		}
+	}
+} 
