@@ -432,3 +432,6 @@ operBinValInt f (ValInt x) (ValInt y)= f x y
 
 printEnv :: RWS.RWS ScopeConfig [String] Environment SymbolValue
 printEnv = (\x -> trace (show x) Void) <$> RWS.get
+
+
+exec file mode = liftM (evalProg mode <$>) $ parseFromFile prog file
