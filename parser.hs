@@ -12,10 +12,11 @@ import Control.Applicative
 import qualified Control.Monad.State as St
 import qualified Control.Monad.RWS as RWS
 import Control.Monad
-import Debug.Trace
+import Control.DeepSeq
 import System.IO.Unsafe
 
 type Ident = String
+type Type = String
 --type Block = [Stmt]
 type FunctArgs = [(Ident,Type)]
 
@@ -29,10 +30,10 @@ data Stmt =   DeclVar Ident Type
 			| CallProc Ident [AExpr]
 			| ControlIf BExpr Block Block
 			| CallPrint AExpr
+			| CallPrintLn AExpr
 			| Return (Maybe AExpr)
 	deriving Show
 
-type Type = String
 {-
  -data Type =   TInt
  -            | TFunc
@@ -94,7 +95,8 @@ dymanikStyle = emptyDef {
 					"else",
 					"var",
 					"int",
-					"print"
+					"print",
+					"println"
 					]
 		}
 
@@ -121,6 +123,7 @@ stmt =  declFunct
 	<|> funReturn
 	<|> controlIf
 	<|> (declVar
+	<|> callPrintLn
 	<|> callPrint
 	<|> (identifier >>=( \x-> CallProc x <$> parens args <|> (Assign x <$> (reservedOp "=" *> aexpr)))) 
 	) <* semi
@@ -156,6 +159,7 @@ assign = Assign <$> identifier <*> (reservedOp "=" *> aexpr)
 callProc = CallProc <$> identifier <*> parens args 
 
 callPrint = CallPrint <$> (reserved "print" *> parens aexpr)
+callPrintLn = CallPrintLn <$> (reserved "println" *> parens aexpr)
 args = commaSep aexpr
 
 
@@ -216,7 +220,7 @@ data SymbolValue =	Uninitialized
 				|	ValInt Integer
 				|	ValFun FunctArgs Block String (Maybe (Map String (Type,SymbolValue)))
 				|	Void
-				|	Exit
+				|	Exit SymbolValue
 				deriving Show
 
 data Environment = Environment {
@@ -294,7 +298,6 @@ lookupStatic name = RWS.asks deepBinding >>= \x-> if x
 						else find name <$> RWS.gets envStack
 					where
 						findDeep _  [] = Nothing
-
 						findDeep name (x:xs) = Map.lookup name (symtableValues x) `mplus` maybe (findDeep name (dropWhile (\n-> symtableName n /= symtableLexicalParent x) xs)) (Map.lookup name) (symtableEnv x) 
 
 						find _ [] =Nothing
@@ -356,6 +359,15 @@ giveType Uninitialized = error "\n Variable is unitialized"
 newEnvironment = Environment [emptySymtable Nothing "Global" ""] [("",[])] 0
 
 printVal x = trace (show x) (return Void)
+		where
+			trace x v =	let str = ( unsafePerformIO . putStr) (x)
+						in deepseq str $  return str >> v
+
+printValLn x = trace (show x) (return Void)
+		where 
+			trace x v =	let str = ( unsafePerformIO . putStrLn) (x)
+						in deepseq str $  return str >> v
+
 
 evalProg ::  ScopeConfig -> [Stmt] -> (SymbolValue, Environment,[String])
 evalProg conf block = RWS.runRWS (evalBlock (Block block) "Global") conf newEnvironment
@@ -363,6 +375,7 @@ evalProg conf block = RWS.runRWS (evalBlock (Block block) "Global") conf newEnvi
 eval :: Stmt -> RWS.RWS ScopeConfig [String]  Environment SymbolValue
 {-eval (CallPrint expr) = liftM (unsafePerformIO . print) (evalExpr expr)  >> return Void-}
 eval (CallPrint expr) = evalExpr expr >>= printVal
+eval (CallPrintLn expr) = evalExpr expr >>= printValLn
 eval (DeclVar name typ) = insertSymbol name (typ,Uninitialized) >> return Void
 eval (DeclFunct name args block) = getCurrentStack >>= (\x -> insertSymbol name ("function", ValFun args block x Nothing)) >>  return Void
 eval (DeclProc name args block) = getCurrentStack >>= (\x -> insertSymbol name ("function",ValFun args block x Nothing )) >> return Void
@@ -370,7 +383,7 @@ eval (Assign name expr) = giveType <$> evalExpr expr >>= assignSymbol name >>ret
 eval (CallProc name args) = RWS.asks lookupScope >>=
 									(\f-> fromMaybe (error $"Error: name not found "++name) <$> f name) >>= 
 										(\x -> case x of
-											("function",ValFun fargs block parent env) -> mapM evalExpr args >>= insertArgs parent fargs env  >> evalBlock block name >> exitScope >> return Void
+											("function",ValFun fargs block parent env) -> mapM evalExpr args >>= insertArgs parent fargs env  >> evalBlock block name >>= (\ret -> exitScope >> return ret)
 											otherwise -> error "Expected Procedure"
 										)
 						where
@@ -379,7 +392,7 @@ eval (CallProc name args) = RWS.asks lookupScope >>=
 eval (ControlIf cond tblock fblock) = do
 									x <- evalBool cond;
 									if x then evalBlock tblock "ifTbranch" else evalBlock fblock "ifFbranch"
-eval (Return a) =maybe (return Exit)  evalExpr a
+eval (Return a) =maybe (return Void)  evalExpr a >>= return . Exit
 
 {-evalBlock :: Block -> RWS.RWS Integer [String] Environment Integer-}
 evalBlock (Block b) name =  getCurrentStack >>= flip (newScope name) Nothing >> eval' b >>= (\x-> exitScope >> return x)
@@ -387,6 +400,7 @@ evalBlock (Block b) name =  getCurrentStack >>= flip (newScope name) Nothing >> 
 			eval' [] = return Void
 			eval' (x:xs) = eval x >>=(\ret -> case ret of
 					 								Void -> eval' xs
+													Exit val -> return val
 													otherwise -> return ret)
 
 evalBool (ValB x) = return x
@@ -430,8 +444,10 @@ operBinValInt f (ValInt x) (ValInt y)= f x y
 
 {- debugging -}
 
-printEnv :: RWS.RWS ScopeConfig [String] Environment SymbolValue
-printEnv = (\x -> trace (show x) Void) <$> RWS.get
+{-
+ -printEnv :: RWS.RWS ScopeConfig [String] Environment SymbolValue
+ -printEnv = (\x -> trace (show x) Void) <$> RWS.get
+ -}
 
 
 exec file mode = liftM (evalProg mode <$>) $ parseFromFile prog file
