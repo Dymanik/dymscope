@@ -1,0 +1,35 @@
+function p(a:int,t:function){
+	var x:int; 
+	x=4+a;
+	function foo(y:int){
+		x = x+y+a;
+	}
+	if(a<=2){
+		p(a+2,foo);
+	}else{
+		t(a*2);
+	}
+	println(x);
+}
+
+/*
+ *function f(a:int,b:int){
+ *    print(a);
+ *    print(b);
+ *}
+ */
+/*f(3,4);*/
+p(0,p);
+
+
+/*
+
+p (a=0,t=p)
+(x=4)
+foo
+p (a=2,t=foo)
+x= 6
+foo
+foo (y=12)
+
+*/

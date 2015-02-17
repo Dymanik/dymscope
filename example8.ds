@@ -1,0 +1,12 @@
+if (true) {
+	var x:int;
+	x=4;
+	function a(){
+		println(x);
+	}
+	if(true){
+		var x:int;
+		x=2;
+		a();
+	}
+}

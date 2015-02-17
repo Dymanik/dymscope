@@ -22,8 +22,8 @@ Los espacios en blanco están definidos por los caracteres ASCII de espacio, tab
 
 Existen dos tipos de comentarios:
 
-  - **/*texto*/**  -- donde todo el texto entre /* y */ es ignorado.
-  - **//texto** -- donde todo el texto desde // hasta el final de la linea es ignorado.
+  - **/\* texto \*/**  -- donde todo el texto entre /* y \*/ es ignorado.
+  - **// texto** -- donde todo el texto desde // hasta el final de la linea es ignorado.
 
 ##Identificadores
 

@@ -320,11 +320,11 @@ lookupStatic name = RWS.asks deepBinding >>= \x-> if x
 					where
 						findDeep  stack [] =  Nothing
 						findDeep  stack (x:xs) = Map.lookup name (symtableValues x) `mplus` maybe (findDeep stack xs) (aux stack <=< Map.lookup name) (symtableEnv x)
-						aux s n = Map.lookup name $ symtableValues $ head $ dropWhile ((n==) . symtableStackPos) s
+						aux s n = Map.lookup name $ symtableValues $ head $ dropWhile ((n/=) . symtableStackPos) s
 						find  = foldr (mplus . Map.lookup name . symtableValues ) Nothing
 
 
-assignStatic name value  = RWS.asks deepBinding >>= \x -> if x
+assignStatic name value  = {-trace ("ASSIGN: "++ name ++" "++show value ) $-} RWS.asks deepBinding >>= \x -> if x
 						then RWS.modify (\x -> x{envStack=assignDeep $ envStack x})
 						else RWS.modify (\x -> x{envStack=assign $ envStack x})
 					where
@@ -347,14 +347,14 @@ assignStatic name value  = RWS.asks deepBinding >>= \x -> if x
 emptySymtable :: Maybe (Map String Integer) -> Integer -> String -> String -> SymbolTable
 emptySymtable =  SymbolTable Map.empty 
 
-newScope name parent env= RWS.gets envStack >>= return stackPos >>=(\n ->  RWS.modify (\x -> x{envStack= emptySymtable env n name  parent : envStack x,envScope=1+envScope x}) ) >> trace'
+newScope name parent env= RWS.gets envStack >>= return stackPos >>=(\n ->  RWS.modify (\x -> x{envStack= emptySymtable env n name  parent : envStack x,envScope=1+envScope x}) ) {->> trace'-}
 			where
-				trace' =  RWS.gets envScope >>= (\x -> trace ("ENTER: " ++ show (x-1)) (return x)) >> (RWS.gets (envStack) >>= \x -> trace (show x) (return Void))
 				stackPos = RWS.gets envScope 
+				{-trace' =  RWS.gets envScope >>= (\x -> trace ("ENTER: " ++ show (x-1)) (return x)) >> (RWS.gets (envStack) >>= \x -> trace (show x) (return Void))-}
 
-exitScope	= trace' >> RWS.modify (\x -> x{envStack = tail ( envStack x) ,envScope=(envScope x)-1})
-		where
-			trace' =  RWS.gets envScope >>= (\x -> trace ("EXIT: " ++ show (x-1)) (return x)) >> (RWS.gets (head.tail.envStack) >>= \x -> trace (show x) (return Void))
+exitScope	= {-trace' >> -}RWS.modify (\x -> x{envStack = tail ( envStack x) ,envScope=(envScope x)-1})
+		{-where-}
+			{-trace' =  RWS.gets envScope >>= (\x -> trace ("EXIT: " ++ show (x-1)) (return x)) >> (RWS.gets (head.tail.envStack) >>= \x -> trace (show x) (return Void))-}
 
 insertSymbol name val binds = do{
 						env<-St.get;
@@ -414,7 +414,11 @@ eval (CallProc name args) =  RWS.asks lookupScope >>=
 										)
 						where
 							{-insertArgs ::String -> [(Ident,Type)] -> [SymbolValue] -> RWS.RWS ScopeConfig [String]  Environment [()]-}
-							insertArgs n parent fargs env args = newScope (name++"|"++(show n)++"|args") parent env >>getBindings >>= (\binds -> zipWithM (\(n,t) v-> insertSymbol n (t,v) (Just binds)) fargs args )
+							insertArgs n parent fargs env args = do {
+								binds <- getBindings;
+								newScope (name++"|"++(show n)++"|args") parent env;
+								zipWithM (\(n,t) v-> insertSymbol n (t,v) (Just binds)) fargs args 
+								}
 eval (ControlIf cond tblock fblock) = do
 									x <- evalBool cond;
 									if x then evalBlock tblock "ifTbranch" else evalBlock fblock "ifFbranch"
@@ -446,6 +450,7 @@ evalExpr (Val n) = return $ ValInt n
 evalExpr (Negate a) = operValInt negate <$> evalExpr a
 evalExpr (Var n) =  do{
 					x <- RWS.asks lookupScope >>= (\f -> f n);
+					{-trace ("EVAL: "++n ++ "JUST" ++ show x)$-}
 					case fromJust x of
 						(_,Uninitialized) -> error (n++" is uninitialized")
 						(_,x) -> return x
