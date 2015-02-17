@@ -4,7 +4,7 @@ a=5;
 
 
 proc g(){
-	print(a);
+	println(a);
 }
 
 proc f(h:function){
@@ -12,8 +12,8 @@ proc f(h:function){
 	var a:int;
 	a=2;
 	h();
-	print(a);
+	println(a);
 }
 
 f(g);
-print(a);
+println(a);
