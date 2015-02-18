@@ -18,66 +18,60 @@ import System.IO.Unsafe
 import Debug.Trace
 
 type Ident = String
-type Type = String
+{-type Type = String-}
 --type Block = [Stmt]
 type FunctArgs = [(Ident,Type)]
 
 data Block = Block Integer [Stmt]
 		deriving Show
+	
+instance Eq Block where
+	(Block a _) == (Block b _) = a == b
 
 data Stmt =   DeclVar Ident Type
 			| DeclFunct Ident FunctArgs Block 
-			| DeclProc Ident FunctArgs Block 
-			| Assign Ident AExpr
-			| CallProc Ident [AExpr]
-			| ControlIf BExpr Block Block
-			| CallPrint AExpr
-			| CallPrintLn AExpr
-			| Return (Maybe AExpr)
+			| Assign Ident Expr
+			| CallProc Ident [Expr]
+			| ControlIf Expr Block Block
+			| CallPrint Expr
+			| CallPrintLn Expr
+			| Return (Maybe Expr)
 	deriving Show
 
-{-
- -data Type =   TInt
- -            | TFunc
- -            | TProc
- -            | TBool
- -        deriving Show
- -}
+data Type =   TInt
+			| TFunct
+			| TBool
+			| TString
+			deriving (Show,Eq)
 
-data AExpr = Negate AExpr 
-			| BinAOp BinAOp AExpr AExpr
-			| Var Ident
-			| Val Integer 
-			| CallFunct Ident [AExpr]
-	deriving Show
+data Expr =   Var Ident
+			| IntLiteral Integer
+			| BoolLiteral Bool
+			| StringLiteral String
+			| CallFunct Ident [Expr]
+			| UnaryExp UnaryOP Expr
+			| BinaryExp BinaryOP Expr Expr
+			deriving Show
 
-data BinAOp = Add 
-			| Mult
-			| Div
-			| Minus
-			| Mod
-	deriving Show
+data UnaryOP = Negate
+			|  Not
+			deriving Show
 
-{-
- -data BinBOp = And
- -            | Or
- -}
+data BinaryOP =   Add {-Aritmetic-}
+				| Mult
+				| Div
+				| Minus
+				| Mod
+				| And {-Boolean-}
+				| Or
+				| LessT {-Comparisons-}
+				| LessTE
+				| GreaterT
+				| GreaterTE
+				| Equals
+				| NEquals
+			deriving Show
 
-
-data BExpr = Or BExpr BExpr
-			| And BExpr BExpr
-			| Comp Rel AExpr AExpr
-			| Not BExpr
-			| ValB Bool
-	deriving Show
-
-data Rel = LessT
-		|  LessTE
-		|  GreaterTE
-		|  GreaterT
-		|  Equals
-		|  NEquals
-	deriving Show
 
 -- Tokens
 
@@ -88,15 +82,16 @@ dymanikStyle = emptyDef {
 		commentLine = "//",
 		identStart = letter,
 		identLetter = alphaNum <|> char '_',
-		reservedOpNames = ["+","-","/","*","=","&&","||","<",">","<=",">=","==","!==","!", ":"],
+		reservedOpNames = ["+","-","/","*","=","&&","||","<",">","<=",">=","==","!=","!", ":"],
 		reservedNames = [
-					"function",
+					"sub",
 					"return",
 					"proc",
 					"if",
 					"else",
 					"var",
 					"int",
+					"bool",
 					"print",
 					"println"
 					]
@@ -109,6 +104,7 @@ reserved = Tok.reserved lexer
 reservedOp = Tok.reservedOp lexer
 identifier = Tok.identifier lexer
 integer = Tok.integer lexer
+stringLiteral = Tok.stringLiteral lexer 
 braces = Tok.braces lexer 
 parens = Tok.parens lexer 
 commaSep = Tok.commaSep lexer 
@@ -123,32 +119,30 @@ prog = whiteSpace *> manyTill stmt eof
 stmts = Block <$> (updateState (+1) >> getState ) <*> many stmt
 
 stmt =  declFunct
-	<|> declProc
 	<|> funReturn
 	<|> controlIf
 	<|> (declVar
 	<|> callPrintLn
 	<|> callPrint
-	<|> (identifier >>=( \x-> CallProc x <$> parens args <|> (Assign x <$> (reservedOp "=" *> aexpr)))) 
+	<|> (identifier >>=( \x-> CallProc x <$> parens args <|> (Assign x <$> (reservedOp "=" *> expr)))) 
 	) <* semi
 
 funstmts = many (funReturn <|> stmt)
 
-funReturn = Return <$> (reserved "return" *> optionMaybe aexpr <* semi)
+funReturn = Return <$> (reserved "return" *> optionMaybe expr <* semi)
 
 --Variable Declaration
 declVar =  DeclVar <$> (reserved "var" *> identifier) <*> (reservedOp ":" *> varType)
 
-varType = (reserved "int" *> return "int")
-		<|> (reserved "proc" *> return "proc")
-		<|> (reserved "function" *> return "function")
+varType = (reserved "int" *> return TInt)
+		<|> (reserved "sub" *> return TFunct)
+		<|> (reserved "bool" *> return TBool)
 
 	
 
 --Function Declaration
-declFunct = DeclFunct <$> (reserved "function" *> identifier) <*> parens functdeclargs <*> braces stmts
+declFunct = DeclFunct <$> (reserved "sub" *> identifier) <*> parens functdeclargs <*> braces stmts
 
-declProc = DeclProc <$> (reserved "proc" *> identifier) <*> parens functdeclargs <*> braces stmts
 
 {-
  -functdeclargs = commaSep identifier
@@ -158,59 +152,67 @@ functdeclargs = commaSep (pair <$> identifier <*> (reservedOp ":" *> varType))
 		where
 			pair a b = (a,b)
 
-assign = Assign <$> identifier <*> (reservedOp "=" *> aexpr)
+assign = Assign <$> identifier <*> (reservedOp "=" *> expr)
 
 callProc = CallProc <$> identifier <*> parens args 
 
-callPrint = CallPrint <$> (reserved "print" *> parens aexpr)
-callPrintLn = CallPrintLn <$> (reserved "println" *> parens aexpr)
-args = commaSep aexpr
+callPrint = CallPrint <$> (reserved "print" *> parens expr)
+callPrintLn = CallPrintLn <$> (reserved "println" *> parens expr)
+args = commaSep expr
 
 
-controlIf = ControlIf <$> (reserved "if" *> parens bexpr) <*> braces stmts <*> (reserved "else" *> braces stmts <|> Block  <$> (getState) <*> return [])
+controlIf = ControlIf <$> (reserved "if" *> parens expr) <*> braces stmts <*> (reserved "else" *> braces stmts <|> Block  <$> getState <*> return [])
 
 --Expresion Parsers
 
 
-opTable = [ [ prefix "-" Negate],
-			[ binary "*" (BinAOp Mult) AssocLeft, binary "/" (BinAOp Div) AssocLeft],
-			[ binary "+" (BinAOp Add) AssocLeft, binary "-" (BinAOp Minus) AssocLeft]
+opTable = [ [ prefix "-" (UnaryExp Negate), prefix "!" (UnaryExp Not)],
+			[ binary "*" (BinaryExp Mult) AssocLeft, binary "/" (BinaryExp Div) AssocLeft , binary "%" (BinaryExp Mod) AssocLeft ],
+			[ binary "+" (BinaryExp Add) AssocLeft, binary "-" (BinaryExp Minus) AssocLeft],
+			[ binary "<" (BinaryExp LessT) AssocLeft, binary "<=" (BinaryExp LessTE) AssocLeft , binary ">" (BinaryExp GreaterT) AssocLeft , binary ">=" (BinaryExp GreaterTE) AssocLeft],
+			[ binary "==" (BinaryExp Equals) AssocLeft, binary "!=" (BinaryExp NEquals) AssocLeft],
+			[ binary "&&" (BinaryExp And) AssocLeft],
+			[ binary "||" (BinaryExp Or) AssocLeft]
 		  ]
+		  where
+		  	prefix op f  = Prefix ( reservedOp op *> return f) 
+			binary op f  = Infix (reservedOp op *> return f) 
 
-prefix op f  = Prefix ( reservedOp op *> return f) 
 
-binary op f  = Infix (reservedOp op *> return f) 
+expr =  buildExpressionParser opTable term
 
-
-aexpr =  buildExpressionParser opTable term
-
-term =  parens aexpr
-	<|> Val <$> integer
+term =  parens expr
+	<|> IntLiteral <$> integer
+	<|> (reserved "true" >> return  (BoolLiteral True))
+	<|> (reserved "false" >> return (BoolLiteral False))
+	<|> StringLiteral <$> stringLiteral
 	<|> (identifier >>=( \x-> CallFunct x <$> parens args <|> return ( Var x))) 
 
-opTableB = [ [ prefix "!" Not],
-			[ binary "&&" And AssocLeft, binary "||" Or AssocLeft]
-		  ]
+{-
+ -opTableB = [ [ prefix "!" Not],
+ -            [ binary "&&" And AssocLeft, binary "||" Or AssocLeft]
+ -          ]
+ -
+ -bexpr = buildExpressionParser opTableB bterm
+ -
+ -
+ -bterm = parens bexpr
+ -    <|> (reserved "true" >> return (ValB True))
+ -    <|> (reserved "false" >> return (ValB False))
+ -    <|> rterm
+ -
+ -rterm = flip Comp <$> expr <*> relation <*> expr
+ -
+ -relation  = reservedOp "<" *> return LessT
+ -        <|> reservedOp "<=" *> return LessTE
+ -        <|> reservedOp "==" *> return Equals
+ -        <|> reservedOp "!==" *> return NEquals
+ -        <|> reservedOp ">=" *> return GreaterTE
+ -        <|> reservedOp ">" *> return GreaterT
+ -}
 
-bexpr = buildExpressionParser opTableB bterm
 
-
-bterm = parens bexpr
-	<|> (reserved "true" >> return (ValB True))
-	<|> (reserved "false" >> return (ValB False))
-	<|> rterm
-
-rterm = flip Comp <$> aexpr <*> relation <*> aexpr
-
-relation  = reservedOp "<" *> return LessT
-		<|> reservedOp "<=" *> return LessTE
-		<|> reservedOp "==" *> return Equals
-		<|> reservedOp "!==" *> return NEquals
-		<|> reservedOp ">=" *> return GreaterTE
-		<|> reservedOp ">" *> return GreaterT
-
-
---------------evaluation (dynamic scope)--------
+--------------evaluation --------
 
 data SymbolTable = SymbolTable {
 					symtableValues :: Map String (Type,SymbolValue),
@@ -223,13 +225,15 @@ data SymbolTable = SymbolTable {
 
 data SymbolValue =	Uninitialized
 				|	ValInt Integer
+				|	ValBool Bool 
+				|	ValString String
 				|	ValFun FunctArgs Block String (Maybe (Map String Integer))
 				|	Void
 				|	Exit SymbolValue
-				deriving Show
+				deriving (Show,Eq)
 
 {-
- -instance Show SymbolValue where
+ instance Show SymbolValue where
  -    show (ValInt x) = show x
  -    show (Uninitialized) = "Uninitialized"
  -    show (Void) = "Void"
@@ -287,7 +291,7 @@ lookupDyn name = RWS.asks deepBinding >>= (\x -> if x
 				)
 				where
 					findDeep [] = Nothing 
-					findDeep l@(x:xs) = {-trace ("LU: "++name++" "++show l) $-}Map.lookup name (symtableValues x) `mplus` maybe (findDeep xs) (aux l <=< Map.lookup name) (symtableEnv x)
+					findDeep l@(x:xs) = Map.lookup name (symtableValues x) `mplus` maybe (findDeep xs) (aux l <=< Map.lookup name) (symtableEnv x)
 					aux l n = Map.lookup name $ symtableValues $  head $  dropWhile ( (n/=).symtableStackPos) l
 
 					find  = foldr (mplus . Map.lookup name .symtableValues) Nothing
@@ -297,10 +301,6 @@ assignDyn name value  = RWS.asks deepBinding >>= (\x -> if x
 					else RWS.modify (\x -> x{envStack=assign $ envStack x})
 				)
 				where
-					{-assignDeep n _ [] = error (n++" variable not in scope")-}
-					{-assignDeep n v (x:xs) = case assign' n v (symtableValues x) of -}
-									{-(Nothing,_) -> x{symtableEnv=(snd .assign' n v) <$>symtableEnv x} : assignDeep n v xs-}
-									{-(Just _, m) -> x{symtableValues=m}:xs-}
 					assignDeep [] = error (name++" variable not in scope")
 					assignDeep l@(x:xs) = case assign' (symtableValues x) of
 									(Nothing,_) -> maybe (x:assignDeep xs) (aux l .fromJust . Map.lookup name) (symtableEnv x)
@@ -310,7 +310,7 @@ assignDyn name value  = RWS.asks deepBinding >>= (\x -> if x
 					assign (x:xs) = case assign' (symtableValues x) of 
 									(Nothing,_) -> x:assign xs
 									(Just _,m) -> x{symtableValues=m}:xs
-					assign' = insertLookupWithKey (\_ a old -> if checktype a old then a else error ("expected" ++ fst old ++ " got " ++ fst a)) name value
+					assign' = insertLookupWithKey (\_ a old -> if checktype a old then a else error ("expected" ++ show (fst old) ++ " got " ++ show (fst a))) name value
 
 
 {- static scope -}
@@ -324,7 +324,7 @@ lookupStatic name = RWS.asks deepBinding >>= \x-> if x
 						find  = foldr (mplus . Map.lookup name . symtableValues ) Nothing
 
 
-assignStatic name value  = {-trace ("ASSIGN: "++ name ++" "++show value ) $-} RWS.asks deepBinding >>= \x -> if x
+assignStatic name value  =  RWS.asks deepBinding >>= \x -> if x
 						then RWS.modify (\x -> x{envStack=assignDeep $ envStack x})
 						else RWS.modify (\x -> x{envStack=assign $ envStack x})
 					where
@@ -335,9 +335,9 @@ assignStatic name value  = {-trace ("ASSIGN: "++ name ++" "++show value ) $-} RW
 						aux l n = (\(x,y) -> x ++ assign y) $ break ((n==) . symtableStackPos) l
 						assign [] = error (name ++ "variable not in scope")
 						assign (x:xs) = case assign' (symtableValues x) of
-									(Nothing,_)	-> x : next (assign) (symtableLexicalParent x) xs
+									(Nothing,_)	-> x : next assign (symtableLexicalParent x) xs
 									(Just _,m)	-> x{symtableValues=m}:xs
-						assign' = insertLookupWithKey (\_ a old -> if checktype a old then a else error ("expected" ++ fst old ++ " got " ++ fst a)) name value
+						assign' = insertLookupWithKey (\_ a old -> if checktype a old then a else error ("expected" ++ (show .fst) old ++ " got " ++ (show .fst) a)) name value
 						next f p  = (\(x,y) -> x ++ f y) . span (\n -> symtableName n /= p)
 
 
@@ -347,26 +347,21 @@ assignStatic name value  = {-trace ("ASSIGN: "++ name ++" "++show value ) $-} RW
 emptySymtable :: Maybe (Map String Integer) -> Integer -> String -> String -> SymbolTable
 emptySymtable =  SymbolTable Map.empty 
 
-newScope name parent env= RWS.gets envStack >>= return stackPos >>=(\n ->  RWS.modify (\x -> x{envStack= emptySymtable env n name  parent : envStack x,envScope=1+envScope x}) ) {->> trace'-}
+newScope name parent env= RWS.gets envStack >>= return stackPos >>=(\n ->  RWS.modify (\x -> x{envStack= emptySymtable env n name  parent : envStack x,envScope=1+envScope x}) ) 
 			where
 				stackPos = RWS.gets envScope 
-				{-trace' =  RWS.gets envScope >>= (\x -> trace ("ENTER: " ++ show (x-1)) (return x)) >> (RWS.gets (envStack) >>= \x -> trace (show x) (return Void))-}
 
-exitScope	= {-trace' >> -}RWS.modify (\x -> x{envStack = tail ( envStack x) ,envScope=(envScope x)-1})
-		{-where-}
-			{-trace' =  RWS.gets envScope >>= (\x -> trace ("EXIT: " ++ show (x-1)) (return x)) >> (RWS.gets (head.tail.envStack) >>= \x -> trace (show x) (return Void))-}
+exitScope	= RWS.modify (\x -> x{envStack = tail (envStack x) ,envScope=envScope x-1})
 
 insertSymbol name val binds = do{
 						env<-St.get;
-						{-binding <- getBindings;-}
-						{-trace ("ENV="++ show env ++"\nname "++name++" <- "++ show val ++" bind="++ show (binds)) $-}
-						let x = insert' name (val') (envStack env) in
+						let x = insert' name val' (envStack env) in
 						St.put $ env{envStack=x}
 					}
 			where
 				insert' a b (x:xs) = x{symtableValues=insert a b (symtableValues x)} : xs
 				val'  = case val of
-					(t,ValFun a b n _) -> (t,ValFun a b n (binds))
+					(t,ValFun a b n _) -> (t,ValFun a b n binds)
 					otherwise -> val
 
 assignSymbol name val = RWS.asks assignScope >>= (\f -> f name val)
@@ -377,55 +372,60 @@ getCurrentStack = RWS.gets (symtableName . head . envStack)
 
 
 giveType ::  SymbolValue -> (Type, SymbolValue)
-giveType val@(ValInt _) = ("int",val)
-giveType val@(ValFun{}) = ("function",val)
+giveType val@(ValInt _) = (TInt,val)
+giveType val@(ValFun{}) = (TFunct,val)
 giveType Uninitialized = error "\n Variable is unitialized" 
 
 newEnvironment = Environment [emptySymtable Nothing (-1)  "Global" ""] [("",[])] 0
 {-newEnvironment = Environment [] [] 0-}
 
-printVal x = trace (show x) (return Void)
+printVal x = trace (showValue x) (return Void)
 		where
 			trace x v =	let str = ( unsafePerformIO . putStr) x
 						in deepseq str $  return str >> v
 
-printValLn x = trace (show x) (return Void)
+printValLn x = trace (showValue x) (return Void)
 		where 
 			trace x v =	let str = ( unsafePerformIO . putStrLn) x
 						in deepseq str $  return str >> v
 
 
+showValue :: SymbolValue -> String
+showValue (ValBool b) = show b
+showValue (ValInt n) = show n
+showValue (ValString s) = show s
+showValue (Void	) = "Void"
+
 evalProg ::  ScopeConfig -> [Stmt] -> (SymbolValue, Environment,[String])
 evalProg conf block = RWS.runRWS (evalBlock (Block 0 block) "Global") conf newEnvironment
 
 eval :: Stmt -> RWS.RWS ScopeConfig [String]  Environment SymbolValue
-{-eval (CallPrint expr) = liftM (unsafePerformIO . print) (evalExpr expr)  >> return Void-}
 eval (CallPrint expr) = evalExpr expr >>= printVal
 eval (CallPrintLn expr) = evalExpr expr >>= printValLn
 eval (DeclVar name typ) = insertSymbol name (typ,Uninitialized) Nothing >> return Void
-eval (DeclFunct name args block) = getCurrentStack >>= (\x -> insertSymbol name ("function", ValFun args block x Nothing) Nothing) >>  return Void
-eval (DeclProc name args block) = getCurrentStack >>= (\x -> insertSymbol name ("function",ValFun args block x Nothing ) Nothing) >> return Void
+eval (DeclFunct name args block) = getCurrentStack >>= (\x -> insertSymbol name (TFunct, ValFun args block x Nothing) Nothing) >>  return Void
 eval (Assign name expr) = giveType <$> evalExpr expr >>= assignSymbol name >>return Void
 eval (CallProc name args) =  RWS.asks lookupScope >>=
 									(\f-> fromMaybe (error $"Error: name not found "++name) <$> f name) >>= 
 										(\x -> case x of
-											("function",ValFun fargs block@(Block n _) parent env) -> mapM evalExpr args >>= insertArgs n parent fargs env  >> evalBlock block name >>= (\ret -> exitScope >> return ret)
+											(TFunct,ValFun fargs block@(Block n _) parent env) -> mapM evalExpr args >>= insertArgs n parent fargs env  >> evalBlock block name >>= (\ret -> exitScope >> return ret)
 											otherwise -> error "Expected Procedure"
 										)
 						where
 							{-insertArgs ::String -> [(Ident,Type)] -> [SymbolValue] -> RWS.RWS ScopeConfig [String]  Environment [()]-}
 							insertArgs n parent fargs env args = do {
 								binds <- getBindings;
-								newScope (name++"|"++(show n)++"|args") parent env;
+								newScope (name++"|"++show n++"|args") parent env;
 								zipWithM (\(n,t) v-> insertSymbol n (t,v) (Just binds)) fargs args 
 								}
 eval (ControlIf cond tblock fblock) = do
-									x <- evalBool cond;
+									(ValBool x) <- evalExpr cond;
 									if x then evalBlock tblock "ifTbranch" else evalBlock fblock "ifFbranch"
 eval (Return a) =liftM Exit (maybe (return Void)  evalExpr a)
 
 {-evalBlock :: Block -> RWS.RWS Integer [String] Environment Integer-}
-evalBlock (Block n b) name =  {-(RWS.gets envStack >>= \x -> trace (show x) (return Void))>>-}getCurrentStack >>= flip (newScope (name++"|"++(show n))) Nothing >> eval' b >>= (\x-> exitScope >> return x)
+evalBlock (Block n b) name =  getCurrentStack >>= flip (newScope (name++"|"++show n)) Nothing 
+							>> eval' b >>= (\x-> exitScope >> return x)
 		where
 			eval' [] = return Void
 			eval' (x:xs) = eval x >>=(\ret -> case ret of
@@ -433,36 +433,38 @@ evalBlock (Block n b) name =  {-(RWS.gets envStack >>= \x -> trace (show x) (ret
 													Exit val -> return val
 													otherwise -> return ret)
 
-evalBool (ValB x) = return x
-evalBool (Or a b) = (||) <$> evalBool a <*> evalBool b
-evalBool (And a b) = (&&) <$> evalBool a <*> evalBool b
-evalBool (Not a) = not <$> evalBool a
-evalBool (Comp r a b) = operBinValInt (compare r) <$> evalExpr a <*> evalExpr b
-			where
-				compare LessT = (<)
-				compare LessTE = (<=)
-				compare GreaterTE = (>=)
-				compare GreaterT = (>)
-				compare Equals = (==)
-				compare NEquals = (/=)
 	
-evalExpr (Val n) = return $ ValInt n
-evalExpr (Negate a) = operValInt negate <$> evalExpr a
-evalExpr (Var n) =  do{
+
+evalExpr (IntLiteral n) = return $ ValInt n
+evalExpr (BoolLiteral b) = return $ ValBool b
+evalExpr (StringLiteral s) = return $ ValString s
+evalExpr (Var n) = do{
 					x <- RWS.asks lookupScope >>= (\f -> f n);
-					{-trace ("EVAL: "++n ++ "JUST" ++ show x)$-}
 					case fromJust x of
-						(_,Uninitialized) -> error (n++" is uninitialized")
-						(_,x) -> return x
+						(_,Uninitialized) -> error (n ++ "is uninitialized")
+						(_,m) -> return m
 					}
-evalExpr (CallFunct n args)  = eval (CallProc n args)
-evalExpr (BinAOp op a b) = ValInt <$> (operBinValInt ( oper op) <$> evalExpr a <*>  evalExpr b)
-			where
-				oper Add = (+)
-				oper Mult = (*)
-				oper Div = div
-				oper Minus = (-)
-				oper Mod = mod
+evalExpr (UnaryExp op e) = evalExpr e >>= f' op
+				where
+					f' Negate (ValInt n) = return $ValInt (-n)
+					f' Not (ValBool b) = return $ValBool (not b)
+evalExpr (BinaryExp op a b) = f' op <$> evalExpr a <*> evalExpr b
+				where
+					f' Add (ValInt a) (ValInt b) = ValInt $ a + b
+					f' Minus (ValInt a) (ValInt b) =ValInt $  a - b
+					f' Mult (ValInt a) (ValInt b) =ValInt $  a * b
+					f' Div (ValInt a) (ValInt b) =ValInt $  a `div` b
+					f' Mod (ValInt a) (ValInt b) =ValInt $  a `mod` b
+					f' And (ValBool a) (ValBool b) =ValBool $  a && b
+					f' Or (ValBool a) (ValBool b) =ValBool $  a || b
+					f' LessT (ValInt a) (ValInt b) =ValBool $  a < b
+					f' LessTE (ValInt a) (ValInt b) =ValBool $  a <= b
+					f' GreaterT (ValInt a) (ValInt b) =ValBool $  a > b
+					f' GreaterTE (ValInt a) (ValInt b) =ValBool $  a >= b
+					f' Equals a b = ValBool $ a == b
+					f' NEquals a b = ValBool $ a /= b
+evalExpr (CallFunct n args) = eval (CallProc n args)
+
 
 
 operValInt ::  (Integer -> Integer) -> SymbolValue -> SymbolValue

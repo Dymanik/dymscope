@@ -3,11 +3,11 @@ var a:int;
 a=5;
 
 
-proc g(){
+sub g(){
 	println(a);
 }
 
-proc f(h:function){
+sub f(h:sub){
 	a=8;
 	var a:int;
 	a=2;

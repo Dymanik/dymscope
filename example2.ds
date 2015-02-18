@@ -2,13 +2,13 @@ var a:int;
 
 a=0;
 
-proc funa(){
+sub funa(){
 	a=3;
 }
 
-proc funb(x:proc){
+sub funb(x:sub){
 	funa();
-	proc funa(){
+	sub funa(){
 	}
 	a=4;
 	x();

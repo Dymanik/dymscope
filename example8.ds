@@ -1,7 +1,7 @@
 if (true) {
 	var x:int;
 	x=4;
-	function a(){
+	sub a(){
 		println(x);
 	}
 	if(true){

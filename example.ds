@@ -1,5 +1,5 @@
 var a:int;
-proc asdf(){
+sub asdf(){
 }
 /* comentarios
 asdfasd
@@ -20,19 +20,19 @@ if (3<5 && true){
 	return 5;
 }
 
-function fun(){
+sub fun(){
 	f=3;
 	zxc=2342;
 	return 1;
 }
 
-/*proc asdf(){
+/*sub asdf(){
 	print a;
 }
 */
 var a:int;
 a=1;
-function funA(){
+sub funA(){
 	print (a);
 	return a;
 }
@@ -44,11 +44,11 @@ funA();
 
 
 
-function funB(b:int){
+sub funB(b:int){
 	var b:int;
 	b(a,b);
 	var a:int;
-	function funC(){
+	sub funC(){
 		print(a);
 	}
 }

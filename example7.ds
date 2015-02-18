@@ -1,7 +1,7 @@
-function p(a:int,t:function){
+sub p(a:int,t:sub){
 	var x:int; 
 	x=4+a;
-	function foo(y:int){
+	sub foo(y:int){
 		x = x+y+a;
 	}
 	if(a<=2){
@@ -13,7 +13,7 @@ function p(a:int,t:function){
 }
 
 /*
- *function f(a:int,b:int){
+ *sub f(a:int,b:int){
  *    print(a);
  *    print(b);
  *}

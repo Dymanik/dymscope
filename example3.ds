@@ -1,6 +1,6 @@
 var a:int;
 a=4;
-function f(a:int){
+sub f(a:int){
 	a=a;
 }
 
