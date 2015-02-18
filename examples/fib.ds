@@ -13,5 +13,5 @@ sub fib(n:int){
 	return fib(n-1) + fib(n-2);
 }
 
-println(n);
-println(fib(n));
+printLn(n);
+printLn(fib(n));

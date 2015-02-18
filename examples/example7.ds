@@ -9,7 +9,7 @@ sub p(a:int,t:sub){
 	}else{
 		t(a*2);
 	}
-	println(x);
+	printLn(x);
 }
 
 /*

@@ -4,7 +4,7 @@ a=5;
 
 
 sub g(){
-	println(a);
+	printLn(a);
 }
 
 sub f(h:sub){
@@ -12,8 +12,8 @@ sub f(h:sub){
 	var a:int;
 	a=2;
 	h();
-	println(a);
+	printLn(a);
 }
 
 f(g);
-println(a);
+printLn(a);

@@ -1,0 +1,8 @@
+var x:int;
+x=10;
+
+printLn(2);
+printLn("2");
+printLn(true);
+printLn(false);
+printLn(x);

@@ -2,7 +2,7 @@ if (true) {
 	var x:int;
 	x=4;
 	sub a(){
-		println(x);
+		printLn(x);
 	}
 	if(true){
 		var x:int;

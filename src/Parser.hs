@@ -93,7 +93,7 @@ dymanikStyle = emptyDef {
 					"int",
 					"bool",
 					"print",
-					"println"
+					"printLn"
 					]
 		}
 
@@ -157,7 +157,7 @@ assign = Assign <$> identifier <*> (reservedOp "=" *> expr)
 callProc = CallProc <$> identifier <*> parens args 
 
 callPrint = CallPrint <$> (reserved "print" *> parens expr)
-callPrintLn = CallPrintLn <$> (reserved "println" *> parens expr)
+callPrintLn = CallPrintLn <$> (reserved "printLn" *> parens expr)
 args = commaSep expr
 
 
@@ -232,14 +232,8 @@ data SymbolValue =	Uninitialized
 				|	Exit SymbolValue
 				deriving (Show,Eq)
 
-{-
- instance Show SymbolValue where
- -    show (ValInt x) = show x
- -    show (Uninitialized) = "Uninitialized"
- -    show (Void) = "Void"
- -    show (ValFun args _ _ _) = "(" ++ show args ++ ")"
- -}
-
+instance NFData SymbolValue where
+	rnf a = a `seq` ()
 
 data Environment = Environment {
 					envStack :: [SymbolTable],
@@ -247,6 +241,9 @@ data Environment = Environment {
 					envScope :: Integer
 				}			
 				deriving Show
+
+instance NFData Environment where
+	rnf a = a `seq`  ()
 
 data ScopeConfig = ScopeConfig {
 						deepBinding :: Bool,
@@ -484,4 +481,4 @@ operBinValInt f (ValInt x) (ValInt y)= f x y
 
 
 {-exec file mode = liftM (evalProg mode <$>) $ parseFromFile prog file-}
-exec file mode =liftM ((evalProg mode <$>) . runParser prog 0 file ) (readFile file)
+exec file mode = return .((evalProg mode <$>) . runParser prog 0 file ) =<< (readFile file)
