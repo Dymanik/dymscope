@@ -1,7 +1,7 @@
-sub p(a:int,t:sub){
+sub p(a:int,t:sub):Void{
 	var x:int; 
 	x=4+a;
-	sub foo(y:int){
+	sub foo(y:int):Void{
 		x = x+y+a;
 	}
 	if(a<=2){

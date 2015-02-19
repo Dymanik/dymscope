@@ -1,7 +1,7 @@
 if (true) {
 	var x:int;
 	x=4;
-	sub a(){
+	sub a():Void{
 		printLn(x);
 	}
 	if(true){

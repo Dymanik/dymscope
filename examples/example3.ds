@@ -1,6 +1,6 @@
 var a:int;
 a=4;
-sub f(a:int){
+sub f(a:int):Void{
 	a=a;
 }
 

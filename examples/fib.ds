@@ -3,7 +3,7 @@ var n:int;
 n=10;
 
 
-sub fib(n:int){
+sub fib(n:int):int{
 	if(n==0){
 		return 1;
 	}

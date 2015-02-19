@@ -2,13 +2,13 @@ var a:int;
 
 a=0;
 
-sub funa(){
+sub funa():Void{
 	a=3;
 }
 
-sub funb(x:sub){
+sub funb(x:sub):Void{
 	funa();
-	sub funa(){
+	sub funa():Void{
 	}
 	a=4;
 	x();

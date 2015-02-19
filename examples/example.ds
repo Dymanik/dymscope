@@ -1,5 +1,5 @@
 var a:int;
-sub asdf(){
+sub asdf():Void{
 }
 /* comentarios
 asdfasd
@@ -20,7 +20,7 @@ if (3<5 && true){
 	return 5;
 }
 
-sub fun(){
+sub fun():int{
 	f=3;
 	zxc=2342;
 	return 1;
@@ -32,7 +32,7 @@ sub fun(){
 */
 var a:int;
 a=1;
-sub funA(){
+sub funA():int{
 	print (a);
 	return a;
 }
@@ -44,11 +44,11 @@ funA();
 
 
 
-sub funB(b:int){
+sub funB(b:int):Void{
 	var b:int;
 	b(a,b);
 	var a:int;
-	sub funC(){
+	sub funC():Void{
 		print(a);
 	}
 }

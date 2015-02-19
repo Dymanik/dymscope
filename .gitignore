@@ -3,6 +3,7 @@ cabal-dev
 *.o
 *.swp
 *.hi
+*.tix
 *.chi
 *.chs.h
 .virtualenv

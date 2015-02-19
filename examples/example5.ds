@@ -3,11 +3,11 @@ var a:int;
 a=5;
 
 
-sub g(){
+sub g():Void{
 	printLn(a);
 }
 
-sub f(h:sub){
+sub f(h:sub):Void{
 	a=8;
 	var a:int;
 	a=2;
