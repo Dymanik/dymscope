@@ -1,5 +1,6 @@
 dist
 cabal-dev
+dymScope
 *.o
 *.swp
 *.hi
@@ -7,6 +8,7 @@ cabal-dev
 *.chi
 *.chs.h
 .virtualenv
+.hpc
 .hsenv
 .cabal-sandbox/
 cabal.sandbox.config
