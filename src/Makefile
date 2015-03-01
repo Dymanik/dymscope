@@ -1,6 +1,6 @@
 
 all: 
-	ghc Main.hs  -O2 --make -o ../dymScope
+	ghc Main.hs  -O2 --make -o ../dymScope -Wall
 
 
 tests:
@@ -9,3 +9,6 @@ tests:
 	 cd ..;ls -p examples | xargs -n1 -I{} bash -c 'echo {};./dymScope --ds examples/{}'
 	 cd ..;ls -p examples | xargs -n1 -I{} bash -c 'echo {};./dymScope --sd examples/{}'
 	 cd ..;ls -p examples | xargs -n1 -I{} bash -c 'echo {};./dymScope --ss examples/{}'
+
+clean:
+	rm ../dymScope *.hi *.o

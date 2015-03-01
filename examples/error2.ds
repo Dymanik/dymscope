@@ -1,0 +1,19 @@
+/*var x :int;*/
+
+/*x=2;*/
+
+/*sub g():Void {*/
+	/*printLn(x+2);*/
+	/*print(y);*/
+	/*f();*/
+/*}*/
+
+/*sub f():Void{*/
+	/*printLn(x+6);*/
+	/*g();*/
+/*}*/
+
+
+/*var y:bool;*/
+/*y = false;*/
+/*f();*/

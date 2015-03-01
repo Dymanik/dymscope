@@ -1,4 +1,5 @@
-x=4;
-printLn(x<="s");
+var x:int;
+x=true;
 
+print(x);
 
