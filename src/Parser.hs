@@ -1,12 +1,23 @@
 module Parser (
 			exec,
+			execString,
 			dynDeepScope,
 			dynShallowScope,
 			staticShallowScope,
 			staticDeepScope,
 			ScopeConfig,
+			SymbolValue(..),
+			Environment,
+			Log,
+			Logunit,
+			logInst,
+			logEnv,
+			symtableValues,
+			symtableName,
+			envStack,
+			staticChain
 			) where
-import Prelude hiding (foldr)
+import Prelude hiding (foldr,concatMap)
 import Text.ParserCombinators.Parsec hiding ((<|>), many)
 import qualified Text.ParserCombinators.Parsec.Token as Tok
 import Text.ParserCombinators.Parsec.Language
@@ -224,10 +235,11 @@ data SymbolValue =	Uninitialized
 				|	ValFun FunctArgs Type Block String (Maybe (Map String Integer))
 				|	Void
 				|	Exit SymbolValue
-				deriving (Show,Eq)
+				deriving (Eq)
 
-instance NFData SymbolValue where
-	rnf a = a `seq` ()
+instance Show SymbolValue where
+	show = showValue
+
 
 data Environment = Environment {
 					envStack :: [SymbolTable],
@@ -237,8 +249,6 @@ data Environment = Environment {
 				deriving Show
 
 
-instance NFData Environment where
-	rnf a = a `seq`  ()
 
 data ScopeConfig = ScopeConfig {
 						deepBinding :: Bool,
@@ -313,7 +323,7 @@ lookupDyn name = RWS.asks deepBinding >>= (\x -> if x
 
 					find'  = foldr (mplus . Map.lookup name .symtableValues) Nothing
 
-assignDyn :: [Char] -> (Type, SymbolValue) -> RWS.RWST ScopeConfig Log Environment (Either EvalError) ()
+assignDyn :: String -> (Type, SymbolValue) -> RWS.RWST ScopeConfig Log Environment (Either EvalError) ()
 assignDyn name value  = RWS.asks deepBinding >>= (\x -> if x
 					then RWS.modify (\y -> y{envStack=assignDeep $ envStack y})
 					else RWS.modify (\y -> y{envStack=assign $ envStack y})
@@ -343,7 +353,7 @@ lookupStatic name = RWS.asks deepBinding >>= \x-> if x
 						find'  = foldr (mplus . Map.lookup name . symtableValues ) Nothing
 
 
-assignStatic :: [Char] -> (Type, SymbolValue) -> RWS.RWST ScopeConfig Log Environment (Either EvalError) ()
+assignStatic :: String -> (Type, SymbolValue) -> RWS.RWST ScopeConfig Log Environment (Either EvalError) ()
 assignStatic name value  =  RWS.asks deepBinding >>= \b -> if b
 						then RWS.modify (\x -> x{envStack=assignDeep $ envStack x})
 						else RWS.modify (\x -> x{envStack=assign $ envStack x})
@@ -382,6 +392,7 @@ insertSymbol name val binds = do{
 						St.put $ env{envStack=x}
 					}
 			where
+				insert' _ _ [] = error "inserting symbol on empty environment"
 				insert' a b (x:xs) = x{symtableValues=insert a b (symtableValues x)} : xs
 				val'  = case val of
 					(t,ValFun a b c n _) -> (t,ValFun a b c n binds)
@@ -417,6 +428,9 @@ showValue (ValBool b) = show b
 showValue (ValInt n) = show n
 showValue (ValString s) = s
 showValue (Void	) = "Void"
+showValue (Uninitialized) = "Uninitialized"
+showValue Exit{} = "exit"
+showValue (ValFun fargs typ _ _ _) = "("++ (init $concatMap ((++",") . show . snd) fargs) ++"):"++show typ
 
 evalProg :: ScopeConfig -> [Stmt] ->Either EvalError (SymbolValue, Environment, Log)
 evalProg conf block = RWS.runRWST (evalBlock (Block 0 block) "Global") conf newEnvironment
@@ -430,7 +444,7 @@ eval inst@(Assign name e) = do{
 						RWS.get >>= RWS.tell . S.singleton . Logunit inst;
 						(t1,_)<-lookupSymbol name;
 						t2<- evalType e ;
-						if (t1/=t2) 
+						if t1/=t2 
 							then RWS.lift $ Left $ WrongType t1 t2
 							else do { x <- (,)t2<$> evalExpr e ;
 								assignSymbol name x ; 
@@ -517,6 +531,7 @@ evalExpr (UnaryExp op e) = evalExpr e >>= f' op
 				where
 					f' Negate (ValInt n) = return $ValInt (-n)
 					f' Not (ValBool b) = return $ValBool (not b)
+					f' _ _  = error "unsupported unary expression"
 evalExpr (BinaryExp op aexp bexp) = f' op <$> evalExpr aexp <*> evalExpr bexp
 				where
 					f' Add (ValInt a) (ValInt b) = ValInt $ a + b
@@ -532,6 +547,7 @@ evalExpr (BinaryExp op aexp bexp) = f' op <$> evalExpr aexp <*> evalExpr bexp
 					f' GreaterTE (ValInt a) (ValInt b) =ValBool $  a >= b
 					f' Equals a b = ValBool $ a == b
 					f' NEquals a b = ValBool $ a /= b
+					f' _ _ _ = error "unsupported binary expression"
 evalExpr (CallFunct n cargs) = eval (CallProc n cargs)
 
 
@@ -542,6 +558,8 @@ evalExpr (CallFunct n cargs) = eval (CallProc n cargs)
  -printEnv = (\x -> trace (show x) Void) <$> RWS.get
  -}
 
+execString ::  ScopeConfig -> String -> Either ParseError (Either EvalError (SymbolValue, Environment, Log))
+execString mode = liftM (evalProg mode) . runParser prog 0 "Input"
 
 exec :: SourceName -> ScopeConfig -> IO (Either ParseError (Either EvalError (SymbolValue, Environment, Log)))
 exec file mode = return . liftM (evalProg mode) . runParser prog 0 file  =<< readFile file
