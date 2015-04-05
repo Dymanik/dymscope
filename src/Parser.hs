@@ -235,7 +235,10 @@ data SymbolValue =	Uninitialized
 				|	ValFun FunctArgs Type Block String (Maybe (Map String Integer))
 				|	Void
 				|	Exit SymbolValue
+				{-deriving (Show,Eq)-}
 				deriving (Eq)
+
+
 
 instance Show SymbolValue where
 	show = showValue
@@ -409,7 +412,7 @@ getCurrentStack = RWS.gets (symtableName . head . envStack)
 
 
 newEnvironment ::  Environment
-newEnvironment = Environment [emptySymtable Nothing (-1)  "Global" ""]  0
+newEnvironment = Environment [emptySymtable Nothing (-1)  "Global" ""]  0 
 
 printVal ::  Monad m => SymbolValue -> m SymbolValue
 printVal x = trace' (showValue x) (return Void)
@@ -436,26 +439,43 @@ evalProg :: ScopeConfig -> [Stmt] ->Either EvalError (SymbolValue, Environment, 
 evalProg conf block = RWS.runRWST (evalBlock (Block 0 block) "Global") conf newEnvironment
 
 eval :: Stmt-> RWS.RWST ScopeConfig Log Environment (Either EvalError) SymbolValue
-eval inst@(CallPrint e) = RWS.get >>= RWS.tell . S.singleton . Logunit inst >> evalType e >> evalExpr e >>= printVal
-eval inst@(CallPrintLn e) = RWS.get >>= RWS.tell . S.singleton . Logunit inst >> evalType e >> evalExpr e >>= printValLn
-eval inst@(DeclVar name typ) = RWS.get >>= RWS.tell . S.singleton . Logunit inst >>insertSymbol name (typ,Uninitialized) Nothing >> return Void
-eval inst@(DeclFunct name arg typ block) = RWS.get >>= RWS.tell . S.singleton . Logunit inst >>getCurrentStack >>= (\x -> insertSymbol name (TFunct, ValFun arg typ block x Nothing) Nothing) >>  return Void
-eval inst@(Assign name e) = do{
-						RWS.get >>= RWS.tell . S.singleton . Logunit inst;
-						(t1,_)<-lookupSymbol name;
-						t2<- evalType e ;
-						if t1/=t2 
-							then RWS.lift $ Left $ WrongType t1 t2
-							else do { x <- (,)t2<$> evalExpr e ;
-								assignSymbol name x ; 
-								return Void ;
-							}
-						}
-eval inst@(CallProc name arg) = RWS.get >>= RWS.tell . S.singleton . Logunit inst >>evalType (CallFunct name arg) >> lookupSymbol name >>= 
-										(\x -> case x of
-											(TFunct,ValFun fargs _ block@(Block n _)  parent env) -> mapM evalExpr arg >>= insertArgs n parent fargs env  >> evalBlock block name >>= (\ret -> exitScope >> return ret)
-											(t,_) -> RWS.lift $ Left $ WrongType t TFunct 
-										)
+eval inst@(CallPrint e) = do
+				RWS.get >>= RWS.tell . S.singleton . Logunit inst
+				evalType e
+				evalExpr e >>= printVal
+eval inst@(CallPrintLn e) = do
+				RWS.get >>= RWS.tell . S.singleton . Logunit inst
+				evalType e
+				evalExpr e >>= printValLn
+eval inst@(DeclVar name typ) =do
+				RWS.get >>= RWS.tell . S.singleton . Logunit inst
+				insertSymbol name (typ,Uninitialized) Nothing
+				return Void
+eval inst@(DeclFunct name arg typ block) = do
+				RWS.get >>= RWS.tell . S.singleton . Logunit inst
+				getCurrentStack >>= (\x -> insertSymbol name (TFunct, ValFun arg typ block x Nothing) Nothing)
+				return Void
+eval inst@(Assign name e) = do
+				RWS.get >>= RWS.tell . S.singleton . Logunit inst
+				(t1,_)<-lookupSymbol name
+				t2<- evalType e 
+				if t1/=t2
+					then RWS.lift $ Left $ WrongType t1 t2
+					else do 
+						x <- (,)t2<$> evalExpr e 
+						assignSymbol name x
+						return Void 
+eval inst@(CallProc name arg) = do
+				RWS.get >>= RWS.tell . S.singleton . Logunit inst
+				evalType (CallFunct name arg)
+				lookupSymbol name >>= (\x -> case x of
+					(TFunct,ValFun fargs _ block@(Block n _)  parent env) -> do 
+							mapM evalExpr arg >>= insertArgs n parent fargs env
+							ret <- evalBlock block name
+							exitScope
+							return ret
+					(t,_) -> RWS.lift $ Left $ WrongType t TFunct 
+									)	
 						where
 							insertArgs n parent fargs env args' = do {
 								binds <- getBindings;
@@ -483,13 +503,20 @@ evalType :: Expr -> RWS.RWST ScopeConfig Log Environment (Either EvalError) Type
 evalType (IntLiteral{}) = return TInt
 evalType (BoolLiteral{}) = return TBool
 evalType (StringLiteral{}) = return TString
-evalType (Var n) = RWS.asks lookupScope >>= (\f -> f n) >>= maybe (RWS.lift $ Left $ NotInScope n) (return.fst)
-evalType (UnaryExp op e) = evalType e >>= (\x -> if x==t' then return x else RWS.lift $ Left $ WrongType x t')
+evalType (Var n) = RWS.asks lookupScope >>= 
+					(\f -> f n) >>= 
+					maybe (RWS.lift $ Left $ NotInScope n) (return.fst)
+evalType (UnaryExp op e) = evalType e >>= 
+							(\x -> if x==t'
+									then return x
+									else RWS.lift $ Left $ WrongType x t')
 					where
 						t' = case op of
 								Negate -> TInt
 								Not -> TBool
-evalType (BinaryExp op a b) = evalType a >>= check >> evalType b >>= check 
+evalType (BinaryExp op a b) = do 
+					evalType a >>= check
+					evalType b >>= check 
 					where
 						check e = if e==opT then return resT else RWS.lift $ Left $ WrongType e opT
 							where
@@ -507,26 +534,32 @@ evalType (BinaryExp op a b) = evalType a >>= check >> evalType b >>= check
 									GreaterT ->( TInt ,TBool)
 									Equals -> (e ,TBool)
 									NEquals ->( e ,TBool)
-evalType (CallFunct n callargs) = RWS.asks lookupScope >>= (\f -> f n) >>= maybe (RWS.lift $ Left $ NotInScope n) go
+evalType (CallFunct n callargs) = RWS.asks lookupScope >>=
+								 (\f -> f n) >>=
+								 maybe (RWS.lift $ Left $ NotInScope n) go
 					where
-						check (_,typ) ex = evalType ex >>= (\x -> if x==typ then return typ else RWS.lift $ Left $ WrongType x typ)
-						go (TFunct,ValFun declargs t _ _ _) = when (callen /= declen) (RWS.lift $ Left $ LessArgs n callen declen) >>zipWithM check declargs callargs 
-										>> return t
-											where
-												callen = length callargs
-												declen = length declargs
+						check (_,typ) ex = evalType ex >>= 
+							(\x -> if x==typ 
+									then return typ
+									else RWS.lift $ Left $ WrongType x typ)
+						go (TFunct,ValFun declargs t _ _ _) = do
+								when (callen /= declen) (RWS.lift $ Left $ LessArgs n callen declen)
+								zipWithM_ check declargs callargs 
+								return t
+									where
+										callen = length callargs
+										declen = length declargs
 						go (t,_) = RWS.lift $ Left $ WrongType t TFunct
 
 evalExpr :: Expr -> RWS.RWST ScopeConfig Log Environment (Either EvalError) SymbolValue
 evalExpr (IntLiteral n) = return $ ValInt n
 evalExpr (BoolLiteral b) = return $ ValBool b
 evalExpr (StringLiteral s) = return $ ValString s
-evalExpr (Var n) = do{
-					x <- RWS.asks lookupScope >>= (\f -> f n);
+evalExpr (Var n) = do
+					x <- RWS.asks lookupScope >>= (\f -> f n)
 					case fromJust x of
 						(_,Uninitialized) -> RWS.lift $ Left $ VariableNotInitialized n
 						(_,m) -> return m
-					}
 evalExpr (UnaryExp op e) = evalExpr e >>= f' op
 				where
 					f' Negate (ValInt n) = return $ValInt (-n)
