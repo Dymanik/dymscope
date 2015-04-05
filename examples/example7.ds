@@ -12,24 +12,5 @@ sub p(a:int,t:sub):Void{
 	printLn(x);
 }
 
-/*
- *sub f(a:int,b:int){
- *    print(a);
- *    print(b);
- *}
- */
-/*f(3,4);*/
 p(0,p);
 
-
-/*
-
-p (a=0,t=p)
-(x=4)
-foo
-p (a=2,t=foo)
-x= 6
-foo
-foo (y=12)
-
-*/

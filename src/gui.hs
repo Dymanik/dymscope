@@ -24,11 +24,8 @@ getMode builder = do
 					(False,True) -> dynShallowScope
 					(True,False) ->  staticDeepScope
 					(False,False) -> dynDeepScope
-			
 
-{-color1 = (62/255, 76/255, 126/255) -}
-{-color2 = (4/255, 191/255, 173/255) -}
-{-color3 = (182/255, 218/255, 227/255) -}
+--CONSTANTS
 
 colorlist ::  [(Double, Double, Double)]
 colorlist = [color1,color2,color3]
@@ -39,46 +36,75 @@ color2 = (255/255, 107/255, 107/255)
 color3 ::  (Double, Double, Double)
 color3 = (136/255, 186/255, 194/255) 
 
+chooseColor ::  Int -> (Double, Double, Double)
+chooseColor n = colorlist !! (n `mod` length colorlist)
+
+stackWidth  = 150
+stackHeigth  = 20
 
 
-stackUnit :: String -> String -> Integer -> Integer -> Int -> Render ()
-stackUnit name value n pos hn = do
-		setLineWidth 1
-		Cairo.rectangle 30 (n'*20+30) 120 20
-		(\(r,g,b) -> setSourceRGB r g b) chooseColor
+drawClosure :: M.Map String Integer -> Render ()
+drawClosure vals = do
+			save
+			translate stackWidth 0
+			moveTo 0 10
+			lineTo 20 10
+			stroke
+			translate 15 0
+			F.foldlM  go 0 $ M.toAscList vals
+			restore
+				where
+					go n (k,v) = do 
+						Cairo.rectangle 0 0 60 stackHeigth
+						(\ (r,g,b) -> setSourceRGB r g b) $ chooseColor n
+						fill
+						setSourceRGB 0 0 0
+						moveTo 0 15
+						showText (k ++"=>"++show v)
+						Cairo.rectangle 0 0 60 stackHeigth
+						stroke
+						translate 60 0
+						return (n+1)
+
+
+
+
+						
+
+stackUnit :: String -> SymbolValue -> Integer -> Int -> Render ()
+stackUnit name value pos n = do
+		Cairo.rectangle 0 0 stackWidth stackHeigth
+		(\(r,g,b) -> setSourceRGB r g b) $ chooseColor n
 		fill
 		setSourceRGB 0 0 0
-		moveTo 32 (n'*20+45)
+		moveTo 2 15
 		showText (show pos)
-		moveTo 50 (n'*20+30)
-		lineTo 50 ((n'+1)*20+30)
-		moveTo 52 (n'*20+45)
-		showText (name++" = "++ value)
-		setSourceRGB 0 0 0
-		Cairo.rectangle 30 (n'*20+30) 120 20
+		moveTo 20 0
+		lineTo 20 stackHeigth
+		moveTo 22 15
+		showText (name ++ " = " ++ show value)
+		Cairo.rectangle 0 0 stackWidth stackHeigth
 		stroke
-			where
-				n' = fromInteger n 
-				chooseColor = colorlist !! (hn `mod` (length colorlist))
+		case value of
+			ValFun _ _ _ _ (Just m) -> drawClosure m
+			_ -> return ()
 
-stackHeader :: String -> Integer -> Int ->  Render ()
-stackHeader name pos hn  = do
-		setLineWidth 1
-		Cairo.rectangle 30 (pos'*20+30) 120 20
-		(\(r,g,b) -> setSourceRGB r g b) chooseColor
+
+{-stackHeader :: String -> Integer -> Int ->  Render ()-}
+stackHeader ::  String -> Int -> Render ()
+stackHeader name hn  = do
+		Cairo.rectangle 0 0 stackWidth stackHeigth
+		(\(r,g,b) -> setSourceRGB r g b) $ chooseColor hn
 		fill
-		moveTo 32 (pos'*20+45)
+		moveTo 2 15
 		setSourceRGB 0 0 0
 		showText name
-		Cairo.rectangle 30 (pos'*20+30) 120 20
+		Cairo.rectangle 0 0 stackWidth stackHeigth
 		stroke
-			where
-				pos' = fromInteger pos 
-				chooseColor = colorlist !! (hn `mod` (length colorlist))
 
 
 data LogDraw = DrawHeader String
-			|  DrawStackUnit String String
+			|  DrawStackUnit String SymbolValue
 
 
 
@@ -86,11 +112,11 @@ staticChainDraw :: M.Map String Integer ->  String -> String -> Render ()
 staticChainDraw _ _ "" = return ()
 staticChainDraw _ "" _ = return ()
 staticChainDraw headers a b = do
-		arc 30 (posY a -10) 10 (pi/2) (pi)
-		arc 30 (posY b +10) 10 (pi) (3*pi/2)
+		arc 0 (posY a -10) 10 (pi/2) (pi)
+		arc 0 (posY b +10) 10 (pi) (3*pi/2)
 		stroke
 		where
-			posY header = (fromInteger $ fromJust $M.lookup header headers) * 20 + 40
+			posY header = (fromInteger $ fromJust $M.lookup header headers) * stackHeigth 
 
 
 
@@ -102,16 +128,20 @@ myDraw (Just log) = do
 		moveTo 10 10
 		showText $ show $ logInst log
 		save
+		translate 30 30
 		(_,_,_,headers,closures) <- F.foldlM stackDraw (0,0,0,M.empty,0) (S.viewl stackSeq)   
 		restore
+		save
+		translate 30 40
 		foldM_ (\a b -> staticChainDraw headers a b >> return b) "" (map symtableName chain)
+		restore
 			where
 				f  = S.fromList . map go . M.toAscList
-				go (k,(t,v)) = DrawStackUnit (k ++ ":" ++ show t) (show v)
+				go (k,(t,v)) = DrawStackUnit (k ++ ":" ++ show t) (v)
 
 				stackSeq = F.foldMap (\x -> (DrawHeader $ symtableName x) S.<| f (symtableValues x) ) $ reverse $  envStack $ logEnv  log
-				stackDraw (n,m,h,headers,closures) (DrawHeader s) = stackHeader s n h >> return (n+1,m,h+1,M.insert s n headers,closures)
-				stackDraw (n,m,h,headers,closures) (DrawStackUnit name val) = stackUnit name val n m (h-1) >> return (n+1,m+1,h,headers,closures)
+				stackDraw (n,m,h,headers,closures) (DrawHeader s) = stackHeader s h  >> translate 0 stackHeigth >> return (n+1,m,h+1,M.insert s n headers,closures)
+				stackDraw (n,m,h,headers,closures) (DrawStackUnit name val) = stackUnit name val m (h-1) >> translate 0 stackHeigth >> return (n+1,m+1,h,headers,closures)
 				chain = staticChain $ envStack $ logEnv log
 
 
@@ -121,7 +151,7 @@ drawStack builder logRef = do
 			drawWindow <- fromJust <$> widgetGetWindow drawArea
 			(_,log,_) <- readIORef logRef
 			renderWithDrawWindow  drawWindow  (myDraw log)
-			widgetSetSizeRequest drawArea (-1) (vars log * 20+50)
+			widgetSetSizeRequest drawArea (-1) (vars log * (floor stackHeigth)+50)
 			where				
 				vars Nothing = -1
 				vars (Just log) = F.foldl' (\acc x -> (acc+1) + M.size (symtableValues x))  0 $ envStack $logEnv log
