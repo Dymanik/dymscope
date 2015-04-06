@@ -239,7 +239,8 @@ data SymbolValue =	Uninitialized
 				{-deriving (Show,Eq)-}
 				deriving (Eq)
 
-
+instance NFData SymbolValue where
+	rnf a = a `seq` ()
 
 instance Show SymbolValue where
 	show = showValue
