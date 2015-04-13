@@ -234,7 +234,13 @@ data SymbolValue =	Uninitialized
 				|	ValInt Integer
 				|	ValBool Bool 
 				|	ValString String
-				|	ValFun FunctArgs Type Block String (Maybe (Map String (Integer,Integer)))
+				|	ValFun{
+						valFunargs::FunctArgs,
+						valFunType::Type,
+						valFunBlock::Block,
+						valFunParent::String,
+						valFunEnv::(Maybe (Map String (Integer,Integer)))
+					}
 				|	Void
 				|	Exit SymbolValue
 				{-deriving (Show,Eq)-}
@@ -288,13 +294,12 @@ instance Show EvalError where
 
 
 
-getBindings :: RWS.RWST ScopeConfig Log Environment (Either EvalError) (Map String (Integer,Integer))
-getBindings =  RWS.asks staticScoping >>= \x-> if x
-				then  foldr go Map.empty <$>RWS.gets (staticChain .envStack)
+getBindings :: String -> RWS.RWST ScopeConfig Log Environment (Either EvalError) (Map String (Integer,Integer))
+getBindings parent =  RWS.asks staticScoping >>= \x-> if x
+				then  foldr go Map.empty <$>RWS.gets (staticChain . dropWhile ((/= parent).symtableName) . envStack)
 				else  foldr go Map.empty <$>RWS.gets envStack
 					where
 						go = union . (\y -> fmap (\(n,_) -> (symtableStackPos y,n)) (symtableValues y) )
-						{-go = ((union . Map.fromList) . (\y-> map (\z->(z,symtableStackPos y)) (keys $symtableValues y)))-}
 
 dynShallowScope ::  ScopeConfig
 dynShallowScope = ScopeConfig False False lookupDyn assignDyn
@@ -307,9 +312,6 @@ staticShallowScope = ScopeConfig False True lookupStatic assignStatic
 
 staticDeepScope ::  ScopeConfig
 staticDeepScope = ScopeConfig True True lookupStatic assignStatic
-
-{-checktype :: (Type,[SymbolValue]) -> (Type,[SymbolValue]) -> Bool-}
-{-checktype (t1,_) (t2,_) = t1 == t2-}
 
 staticChain :: [SymbolTable] -> [SymbolTable]
 staticChain [] = []
@@ -384,8 +386,7 @@ assignStatic name value  =  RWS.asks deepBinding >>= \b -> if b
 
 
 
-{-emptySymtable ::  String -> String -> SymbolTable-}
-{-emptySymtable :: Maybe (Map String Integer) -> Integer -> String -> String -> SymbolTable-}
+emptySymtable :: Maybe (Map String (Integer, Integer))-> Integer -> Integer -> String -> String -> SymbolTable
 emptySymtable =  SymbolTable Map.empty 
 
 newScope :: String -> String -> Maybe (Map String (Integer,Integer)) -> RWS.RWST ScopeConfig Log Environment (Either EvalError) ()
@@ -395,26 +396,27 @@ newScope name parent env= do
 				RWS.modify (\x -> x{envStack= emptySymtable env pos fp name  parent : envStack x,envScope=1+envScope x}) 
 			where
 				stackPos = RWS.gets envScope 
-				{-stackSP  = RWS.gets (head . envStack) >>= return . (\x -> (symtableFramePointer x) + fromIntegral (Map.size (symtableValues x)))-}
 				stackSP  = (\x -> symtableFramePointer x + fromIntegral (Map.size (symtableValues x))) <$>  RWS.gets (head . envStack) 
 
 exitScope :: RWS.RWST ScopeConfig Log Environment (Either EvalError) ()
 exitScope	= RWS.modify (\x -> x{envStack = tail (envStack x) ,envScope=envScope x-1})
 
-insertSymbol :: String -> (Type, SymbolValue) -> Maybe (Map String (Integer,Integer)) -> RWS.RWST ScopeConfig Log Environment (Either EvalError) ()
-insertSymbol name val binds = do
+insertSymbol :: String -> (Type, SymbolValue)-> RWS.RWST ScopeConfig Log Environment (Either EvalError) ()
+insertSymbol name val  = do
 						env<-St.get
 						sp <- stackSP
-						let x = insert' name (sp,val') (envStack env) in
-							St.put $ env{envStack=x}
-					
+						val' <- getValWithBindings
+						let x = insert' name (sp,val') (envStack env)
+						St.put $ env{envStack=x}
 			where
 				insert' _ _ [] = error "inserting symbol on empty environment"
 				insert' a b (x:xs) = x{symtableValues=insert a b (symtableValues x)} : xs
 				stackSP  = (\x -> symtableFramePointer x + fromIntegral (Map.size (symtableValues x))) <$>  RWS.gets (head . envStack) 
-				val'  = case val of
-					(t,ValFun a b c n _) -> (t,[ValFun a b c n binds])
-					(t,v) -> (t,[v])
+				getValWithBindings = case val of
+					(t,vf@(ValFun{})) -> do
+									binds <- getBindings (valFunParent vf)
+									return (t,[vf{valFunEnv=Just binds}])
+					(t,v) -> return (t,[v])
 
 assignSymbol :: String-> (Type, SymbolValue)-> RWS.RWST ScopeConfig Log Environment (Either EvalError) ()
 assignSymbol name val = RWS.asks assignScope >>= (\f -> f name val)
@@ -467,11 +469,11 @@ eval inst@(CallPrintLn e) = do
 				evalExpr e >>= printValLn
 eval inst@(DeclVar name typ) =do
 				RWS.get >>= RWS.tell . S.singleton . Logunit inst
-				insertSymbol name (typ,Uninitialized) Nothing
+				insertSymbol name (typ,Uninitialized) 
 				return Void
 eval inst@(DeclFunct name arg typ block) = do
 				RWS.get >>= RWS.tell . S.singleton . Logunit inst
-				getCurrentStack >>= (\x -> insertSymbol name (TFunct, ValFun arg typ block x Nothing) Nothing)
+				getCurrentStack >>= (\x -> insertSymbol name (TFunct, ValFun arg typ block x Nothing) )
 				return Void
 eval inst@(Assign name e) = do
 				RWS.get >>= RWS.tell . S.singleton . Logunit inst
@@ -495,11 +497,10 @@ eval inst@(CallProc name arg) = do
 					(t,_) -> RWS.lift $ Left $ WrongType t TFunct 
 									)	
 						where
-							insertArgs n parent fargs env args' = do {
-								binds <- getBindings;
-								newScope (name++"|"++show n++"|args") parent env;
-								zipWithM (\(nam,t) v-> insertSymbol nam (t,v) (Just binds)) fargs args' 
-								}
+							insertArgs n parent fargs env args' = do 
+								newScope (name++"|"++show n++"|args") parent env
+								zipWithM (\(nam,t) v-> insertSymbol nam (t,v)) fargs args' 
+								
 eval inst@(ControlIf cond tblock fblock) = do
 									RWS.get >>= RWS.tell . S.singleton . Logunit inst;
 									(ValBool x) <- evalExpr cond;
@@ -601,13 +602,6 @@ evalExpr (BinaryExp op aexp bexp) = f' op <$> evalExpr aexp <*> evalExpr bexp
 					f' _ _ _ = error "unsupported binary expression"
 evalExpr (CallFunct n cargs) = eval (CallProc n cargs)
 
-
-{- debugging -}
-
-{-
- -printEnv :: RWS.RWS ScopeConfig Log Environment SymbolValue
- -printEnv = (\x -> trace (show x) Void) <$> RWS.get
- -}
 
 execString ::  ScopeConfig -> String -> Either ParseError (Either EvalError (SymbolValue, Environment, Log))
 execString mode = liftM (evalProg mode) . runParser prog 0 "Input"
