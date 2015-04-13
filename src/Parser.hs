@@ -55,6 +55,7 @@ data Stmt =   DeclVar Ident Type
 			| CallPrint Expr
 			| CallPrintLn Expr
 			| Return (Maybe Expr)
+			| EndProg
 	deriving Show
 
 data Type =   TInt
@@ -220,7 +221,7 @@ term =  parens expr
 --------------evaluation --------
 
 data SymbolTable = SymbolTable {
-					symtableValues :: Map String (Integer,(Type,SymbolValue)),
+					symtableValues :: Map String (Integer,(Type,[SymbolValue])),
 					symtableEnv :: Maybe (Map String (Integer,Integer)),
 					symtableStackPos :: Integer,
 					symtableFramePointer :: Integer,
@@ -307,8 +308,8 @@ staticShallowScope = ScopeConfig False True lookupStatic assignStatic
 staticDeepScope ::  ScopeConfig
 staticDeepScope = ScopeConfig True True lookupStatic assignStatic
 
-checktype :: (Type,SymbolValue) -> (Type,SymbolValue) -> Bool
-checktype (t1,_) (t2,_) = t1 == t2
+{-checktype :: (Type,[SymbolValue]) -> (Type,[SymbolValue]) -> Bool-}
+{-checktype (t1,_) (t2,_) = t1 == t2-}
 
 staticChain :: [SymbolTable] -> [SymbolTable]
 staticChain [] = []
@@ -321,8 +322,8 @@ staticChain (x:xs) = x : f xs
 {- dinamic scopes -}
 lookupDyn :: String -> RWS.RWST ScopeConfig Log Environment (Either EvalError) (Maybe (Type, SymbolValue))
 lookupDyn name = RWS.asks deepBinding >>= (\x -> if x
-					then fmap snd.findDeep <$> RWS.gets envStack 
-					else fmap snd . find' <$> RWS.gets envStack
+					then fmap (\(_,(t,(v:_))) -> (t,v)) . findDeep <$> RWS.gets envStack 
+					else fmap (\(_,(t,(v:_))) -> (t,v)) . find' <$> RWS.gets envStack
 				)
 				where
 					findDeep [] = Nothing 
@@ -346,14 +347,15 @@ assignDyn name value  = RWS.asks deepBinding >>= (\x -> if x
 					assign (x:xs) = case assign' (symtableValues x) of 
 									(Nothing,_) -> x:assign xs
 									(Just _,m) -> x{symtableValues=m}:xs
-					assign' = insertLookupWithKey (\_ (_,a) (n,old) -> if checktype a old then (n,a) else error ("expected" ++ show (fst old) ++ " got " ++ show (fst a))) name (0,value)
+					assign' = insertLookupWithKey (\_ (_,(tnew,a)) (n,(told,old)) -> if tnew==told then (n,(told,a++old)) else error ("expected" ++ show told ++ " got " ++ show tnew)) name value'
+					value' = (\(b,c) -> (0,(b,[c]))) value
 
 
 {- static scope -}
 lookupStatic :: String -> RWS.RWST ScopeConfig Log Environment (Either EvalError) (Maybe (Type, SymbolValue))
 lookupStatic name = RWS.asks deepBinding >>= \x-> if x
-						then (\x -> fmap snd . findDeep x ) <$> RWS.gets envStack <*> RWS.gets (staticChain . envStack)
-						else fmap snd . find'  <$> RWS.gets (staticChain . envStack)
+						then (\x -> fmap (\(_,(t,(x:_))) -> (t,x)) . findDeep x ) <$> RWS.gets envStack <*> RWS.gets (staticChain . envStack)
+						else fmap (\(_,(t,(x:_))) -> (t,x)) . find'  <$> RWS.gets (staticChain . envStack)
 					where
 						findDeep  _ [] =  Nothing
 						findDeep  stack (x:xs) = Map.lookup name (symtableValues x) `mplus` maybe (findDeep stack xs) (aux stack . fst <=< Map.lookup name) (symtableEnv x)
@@ -375,8 +377,9 @@ assignStatic name value  =  RWS.asks deepBinding >>= \b -> if b
 						assign (x:xs) = case assign' (symtableValues x) of
 									(Nothing,_)	-> x : next assign (symtableLexicalParent x) xs
 									(Just _,m)	-> x{symtableValues=m}:xs
-						assign' = insertLookupWithKey (\_ (_,a) (n,old) -> if checktype a old then (n,a) else error ("expected" ++ (show .fst) old ++ " got " ++ (show .fst) a)) name (0,value)
+						assign' = insertLookupWithKey (\_ (_,(tnew,a)) (n,(told,old)) -> if tnew==told then (n,(told,a++old)) else error ("expected" ++ show told ++ " got " ++ show tnew)) name value'
 						next f p  = (\(x,y) -> x ++ f y) . span (\n -> symtableName n /= p)
+						value' = (\(b,c) -> (0,(b,[c]))) value
 
 
 
@@ -410,8 +413,8 @@ insertSymbol name val binds = do
 				insert' a b (x:xs) = x{symtableValues=insert a b (symtableValues x)} : xs
 				stackSP  = (\x -> symtableFramePointer x + fromIntegral (Map.size (symtableValues x))) <$>  RWS.gets (head . envStack) 
 				val'  = case val of
-					(t,ValFun a b c n _) -> (t,ValFun a b c n binds)
-					_ -> val
+					(t,ValFun a b c n _) -> (t,[ValFun a b c n binds])
+					(t,v) -> (t,[v])
 
 assignSymbol :: String-> (Type, SymbolValue)-> RWS.RWST ScopeConfig Log Environment (Either EvalError) ()
 assignSymbol name val = RWS.asks assignScope >>= (\f -> f name val)
@@ -448,7 +451,10 @@ showValue Exit{} = "exit"
 showValue (ValFun fargs typ _ _ _) = "("++ concatMap ((++",") . show . snd) fargs ++"):"++show typ
 
 evalProg :: ScopeConfig -> [Stmt] ->Either EvalError (SymbolValue, Environment, Log)
-evalProg conf block = RWS.runRWST (evalBlock (Block 0 block) "Global") conf newEnvironment
+evalProg conf block = RWS.runRWST (do
+					ret<-evalBlock (Block 0 block) "Global"
+					RWS.get >>= RWS.tell . S.singleton . Logunit EndProg
+					return ret) conf newEnvironment
 
 eval :: Stmt-> RWS.RWST ScopeConfig Log Environment (Either EvalError) SymbolValue
 eval inst@(CallPrint e) = do

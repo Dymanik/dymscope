@@ -1,0 +1,31 @@
+var foo:int;
+var bar:int;
+foo=2;
+bar=3;
+
+sub B(wee:sub,bar:int):Void{
+        if (bar > 1) {
+                B(wee,bar-1);
+        }
+        wee(bar);
+        printLn(bar);
+}
+
+sub A(baz:int,foo:int):Void{
+        sub fudge(qux:int):Void{
+                bar = foo + bar + qux;
+        }
+
+        var bar :int;
+        bar = baz;
+        B(fudge,foo);
+        printLn(bar);
+}
+
+sub main():Void{
+	A(foo,2);
+	printLn(bar);
+}
+
+main();
+

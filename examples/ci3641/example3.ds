@@ -1,0 +1,28 @@
+var foo:int;
+
+sub woot(qux:int){
+	var bar:int;
+
+	sub what(baz:int){
+		foo = foo + bar + baz;
+	}
+
+	sub wait(p:sub, tf:int){
+		var foo:int;
+		foo = tf;
+		if (tf<42){
+			wait(what, 3*foo);
+		}else{
+			p(tf);
+		}
+		printLn(foo);
+	}
+	bar=qux*2;
+	wait(what,bar);
+}
+
+main():Void{
+	foo=7;
+	woot(foo);
+	printLn(foo);
+}

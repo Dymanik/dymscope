@@ -1,5 +1,5 @@
 import Graphics.UI.Gtk
-import Data.List(sortBy)
+import Data.List(sortBy,intersperse)
 import Control.Monad.IO.Class
 import Parser
 import Data.IORef
@@ -54,7 +54,7 @@ drawClosure vals = do
 			moveTo 0 10
 			lineTo 20 10
 			stroke
-			translate 15 0
+			translate 20 0
 			F.foldlM  go 0 $ M.toAscList vals
 			restore
 				where
@@ -70,8 +70,8 @@ drawClosure vals = do
 						translate 60 0
 						return (n+1)
 
-stackUnit :: String -> SymbolValue -> Integer -> Int -> Render ()
-stackUnit name value pos n = do
+stackUnit :: String -> [SymbolValue] -> Integer -> Int -> Render ()
+stackUnit name (value:oldVal) pos n = do
 		Cairo.rectangle 0 0 stackWidth stackHeigth
 		(\(r,g,b) -> setSourceRGB r g b) $ chooseColor n
 		fill
@@ -81,15 +81,23 @@ stackUnit name value pos n = do
 		moveTo 20 0
 		lineTo 20 stackHeigth
 		moveTo 22 15
-		showText (name ++ " = " ++ show value)
+		showText (varText)
+		(x',y') <- getCurrentPoint
+		showText (oldValues)
+		relMoveTo 0 (-3)
+		lineTo x' (y'-3)
 		Cairo.rectangle 0 0 stackWidth stackHeigth
 		stroke
 		case value of
 			ValFun _ _ _ _ (Just m) -> drawClosure m
 			_ -> return ()
+			where
+				varText = name ++ " = " ++ show value ++ " "
+				oldValues = case filter (/= Uninitialized) oldVal of
+								[] -> ""
+								olds -> concat $ (",":) $ intersperse "," $ map show olds
 
 
-{-stackHeader :: String -> Integer -> Int ->  Render ()-}
 stackHeader ::  String -> Int -> Render ()
 stackHeader name hn  = do
 		Cairo.rectangle 0 0 stackWidth stackHeigth
@@ -103,7 +111,7 @@ stackHeader name hn  = do
 
 
 data LogDraw = DrawHeader String
-			|  DrawStackUnit String SymbolValue Integer
+			|  DrawStackUnit String [SymbolValue] Integer
 
 
 
@@ -265,7 +273,7 @@ main ::  IO ()
 main = do 
 		initGUI
 		builder <- builderNew
-		builderAddFromFile builder  "dymgtk.glade"
+		builderAddFromFile builder  "resources/dymgtk.glade"
 		window <- builderGetObject builder castToWindow "window1"
 		window `on` deleteEvent $ liftIO mainQuit >> return False
 		runButton <- builderGetObject builder castToButton "runButton"
