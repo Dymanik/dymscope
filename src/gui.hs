@@ -71,6 +71,7 @@ drawClosure vals = do
 						return (n+1)
 
 stackUnit :: String -> [SymbolValue] -> Integer -> Int -> Render ()
+stackUnit _ [] _ _ = error "empty Value"
 stackUnit name (value:oldVal) pos n = do
 		Cairo.rectangle 0 0 stackWidth stackHeigth
 		(\(r,g,b) -> setSourceRGB r g b) $ chooseColor n

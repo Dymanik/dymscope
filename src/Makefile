@@ -1,11 +1,12 @@
+flags=-O2 --make -Wall -fno-warn-unused-do-bind
 
 all: main gui
 
 main:
-	ghc Main.hs  -O2 --make -o ../dymScope -Wall
+	ghc Main.hs  -o ../dymScope  ${flags} 
 
 gui:
-	ghc gui.hs -O2 --make -o ../dymScopeGtk -Wall
+	ghc gui.hs -o ../dymScopeGtk ${flags}
 
 tests:
 	 ghc --make -fhpc -o ../dymScope Main.hs -fforce-recomp
