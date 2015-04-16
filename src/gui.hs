@@ -47,7 +47,7 @@ stackHeigth ::  Double
 stackHeigth  = 20
 
 
-drawClosure :: M.Map String (Integer,Integer) -> Render ()
+drawClosure :: M.Map String (Integer,Int) -> Render ()
 drawClosure vals = do
 			save
 			translate stackWidth 0
@@ -70,7 +70,7 @@ drawClosure vals = do
 						translate 60 0
 						return (n+1)
 
-stackUnit :: String -> [SymbolValue] -> Integer -> Int -> Render ()
+stackUnit :: String -> [SymbolValue] -> Int -> Int -> Render ()
 stackUnit _ [] _ _ = error "empty Value"
 stackUnit name (value:oldVal) pos n = do
 		Cairo.rectangle 0 0 stackWidth stackHeigth
@@ -112,7 +112,7 @@ stackHeader name hn  = do
 
 
 data LogDraw = DrawHeader String
-			|  DrawStackUnit String [SymbolValue] Integer
+			|  DrawStackUnit String [SymbolValue] Int
 
 
 

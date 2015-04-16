@@ -275,10 +275,10 @@ term =  parens expr
 --------------evaluation --------
 
 data SymbolTable = SymbolTable {
-					symtableValues :: Map String (Integer,(Type,[SymbolValue])),
-					symtableEnv :: Maybe (Map String (Integer,Integer)),
+					symtableValues :: Map String (Int,(Type,[SymbolValue])),
+					symtableEnv :: Maybe (Map String (Integer,Int)),
 					symtableStackPos :: Integer,
-					symtableFramePointer :: Integer,
+					symtableFramePointer :: Int,
 					symtableName :: String,
 					symtableLexicalParent :: (String,Int)
 				}
@@ -293,7 +293,7 @@ data SymbolValue =	Uninitialized
 						valFunType::Type,
 						valFunBlock::Block,
 						valFunParent::(String,Int),
-						valFunEnv::(Maybe (Map String (Integer,Integer)))
+						valFunEnv::(Maybe (Map String (Integer,Int)))
 					}
 				|	Void
 				|	Exit SymbolValue
@@ -350,14 +350,14 @@ instance Show EvalError where
 
 
 
-getBindings :: (String,Int) -> RWS.RWST ScopeConfig Log Environment (Either EvalError) (Map String (Integer,Integer))
+getBindings :: (String,Int) -> RWS.RWST ScopeConfig Log Environment (Either EvalError) (Map String (Integer,Int))
 getBindings (parent,off) =  RWS.asks staticScoping >>= \x-> if x
 				then  foldr go Map.empty <$>RWS.gets (staticChain . g .  dropWhile ((/= parent).symtableName) . envStack)
 				else  foldr go Map.empty <$>RWS.gets envStack
 					where
 						go = union . (\y -> fmap (\(n,_) -> (symtableStackPos y,n)) (symtableValues y) )
 						g (y:ys) = y{symtableValues=cleanMap y} : ys
-						cleanMap y = Map.filter (\(n,_) ->  (fromIntegral n) <= ((fromIntegral off) + symtableFramePointer y)) (symtableValues y)
+						cleanMap y = Map.filter (\(n,_) ->   n <= ((off) + symtableFramePointer y)) (symtableValues y)
 
 dynShallowScope ::  ScopeConfig
 dynShallowScope = ScopeConfig False False lookupDyn assignDyn
@@ -428,20 +428,21 @@ lookupStatic name = RWS.asks deepBinding >>= \x-> if x
 assignStatic :: String -> (Type, SymbolValue) -> RWS.RWST ScopeConfig Log Environment (Either EvalError) ()
 assignStatic name value  =  do
 						b<-RWS.asks deepBinding 
-						off<-RWS.gets (size . symtableValues . head . envStack)
 						if b
-							then RWS.modify (\x -> x{envStack=assignDeep off $ envStack x})
-							else RWS.modify (\x -> x{envStack=assign off $ envStack x})
+							then RWS.modify (\x -> x{envStack=assignDeep (-1) $ envStack x})
+							else RWS.modify (\x -> x{envStack=assign (-1) $ envStack x})
 					where
 						assignDeep _ [] = error (name ++ "variable not in scope")
-						assignDeep _ l@(x:xs) = case assign' (symtableValues x) of
-									(Nothing , _) -> maybe (x: next assignDeep (symtableLexicalParent x) xs) (aux l . fst . fromJust . Map.lookup name) (symtableEnv x)
-									(Just _ , m)  -> x{symtableValues=m}:xs
-						aux l n = (\(x,y) -> x ++ assign 1000 y) $ break ((n==) . symtableStackPos) l
+						assignDeep parent l@(x:xs) = case clean parent (x) of
+									(False,(Nothing , _)) -> maybe (x: next assignDeep (symtableLexicalParent x) xs) (aux l . fst . fromJust . Map.lookup name) (symtableEnv x)
+									(True,(Just _ , m))  -> x{symtableValues=m}:xs
+						aux l n = (\(x,y) -> x ++ assign (-1) y) $ break ((n==) . symtableStackPos) l
 						assign _ [] = error (name ++ "variable not in scope")
-						assign _ (x:xs) = case assign' (symtableValues x) of
-									(Nothing,_)	-> x : next assign (symtableLexicalParent x) xs
-									(Just _,m)	-> x{symtableValues=m}:xs
+						assign parent (x:xs) = case clean parent (x) of
+									(False, _)	-> x : next assign (symtableLexicalParent x) xs
+									(True,(Just _,m))	-> x{symtableValues=m}:xs
+						clean (-1) table = (member name $ symtableValues table , assign' $ symtableValues table)
+						clean (offset) table = (member name $ Map.filter (\(n,_) -> n <= offset + (symtableFramePointer table)) (symtableValues table) ,assign' $ symtableValues table) 
 						assign' = insertLookupWithKey (\_ (_,(tnew,a)) (n,(told,old)) -> if tnew==told then (n,(told,a++old)) else error ("expected" ++ show told ++ " got " ++ show tnew)) name value'
 						next f (p,off)  = (\(x,y) -> x ++ f off y) . span (\n -> symtableName n /= p)
 						value' = (\(b,c) -> (0,(b,[c]))) value
@@ -449,10 +450,10 @@ assignStatic name value  =  do
 
 
 
-emptySymtable :: Maybe (Map String (Integer, Integer))-> Integer -> Integer -> String -> (String,Int) -> SymbolTable
+emptySymtable :: Maybe (Map String (Integer, Int))-> Integer -> Int -> String -> (String,Int) -> SymbolTable
 emptySymtable =  SymbolTable Map.empty 
 
-newScope :: String -> (String,Int) -> Maybe (Map String (Integer,Integer)) -> RWS.RWST ScopeConfig Log Environment (Either EvalError) ()
+newScope :: String -> (String,Int) -> Maybe (Map String (Integer,Int)) -> RWS.RWST ScopeConfig Log Environment (Either EvalError) ()
 newScope name (parent,off) env= do
 				pos <- stackPos
 				fp <- stackSP
@@ -461,7 +462,7 @@ newScope name (parent,off) env= do
 			where
 				stackPos = RWS.gets envScope 
 				offset =  RWS.gets ( Map.size . symtableValues . head . envStack)
-				stackSP  = (\x -> symtableFramePointer x + fromIntegral (Map.size (symtableValues x))) <$>  RWS.gets (head . envStack) 
+				stackSP  = (\x -> symtableFramePointer x + (Map.size (symtableValues x))) <$>  RWS.gets (head . envStack) 
 
 exitScope :: RWS.RWST ScopeConfig Log Environment (Either EvalError) ()
 exitScope	= RWS.modify (\x -> x{envStack = tail (envStack x) ,envScope=envScope x-1})
