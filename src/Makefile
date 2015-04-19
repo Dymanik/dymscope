@@ -11,10 +11,10 @@ gui:
 tests:
 	 ghc --make -fhpc -o ../dymScope Main.hs -fforce-recomp
 	 ghc --make -fhpc -o ../dymScopeGtk gui.hs -fforce-recomp
-	 cd ..;ls -p examples | xargs -n1 -I{} bash -c 'echo {};./dymScope --dd examples/{}'
-	 cd ..;ls -p examples | xargs -n1 -I{} bash -c 'echo {};./dymScope --ds examples/{}'
-	 cd ..;ls -p examples | xargs -n1 -I{} bash -c 'echo {};./dymScope --sd examples/{}'
-	 cd ..;ls -p examples | xargs -n1 -I{} bash -c 'echo {};./dymScope --ss examples/{}'
+	 cd ..; find examples -name *.ds | xargs -n1 -I{} bash -c 'echo {};./dymScope --dd {}'
+	 cd ..; find examples -name *.ds | xargs -n1 -I{} bash -c 'echo {};./dymScope --ds {}'
+	 cd ..; find examples -name *.ds | xargs -n1 -I{} bash -c 'echo {};./dymScope --sd {}'
+	 cd ..; find examples -name *.ds | xargs -n1 -I{} bash -c 'echo {};./dymScope --ss {}'
 
 clean:
 	rm ../dymScope *.hi *.o

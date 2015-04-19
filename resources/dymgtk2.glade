@@ -2,7 +2,31 @@
 <!-- Generated with glade 3.16.1 -->
 <interface>
   <requires lib="gtk+" version="3.10"/>
-  <object class="GtkTextBuffer" id="codeBuffer"/>
+  <requires lib="gtksourceview" version="3.0"/>
+  <object class="GtkTextBuffer" id="codeBuffer">
+    <property name="text" translatable="yes">zzc
+Zxc
+ZX
+c
+</property>
+  </object>
+  <object class="GtkSourceView" id="codeTextView">
+    <property name="visible">True</property>
+    <property name="can_focus">True</property>
+    <property name="left_margin">2</property>
+    <property name="right_margin">2</property>
+    <property name="buffer">codeBuffer</property>
+    <property name="input_purpose">alpha</property>
+    <property name="show_line_numbers">True</property>
+    <property name="show_line_marks">True</property>
+    <property name="tab_width">4</property>
+    <property name="highlight_current_line">True</property>
+  </object>
+  <object class="GtkTextView" id="codeTextview">
+    <property name="visible">True</property>
+    <property name="can_focus">True</property>
+    <property name="buffer">codeBuffer</property>
+  </object>
   <object class="GtkTextBuffer" id="currLineBuffer"/>
   <object class="GtkTextBuffer" id="outputBuffer"/>
   <object class="GtkWindow" id="window1">
@@ -33,18 +57,14 @@
                     <property name="can_focus">False</property>
                     <property name="left_padding">12</property>
                     <child>
-                      <object class="GtkScrolledWindow" id="scrolledwindow2">
+                      <object class="GtkScrolledWindow" id="scrolledCode">
                         <property name="visible">True</property>
                         <property name="can_focus">True</property>
                         <property name="margin_right">5</property>
                         <property name="margin_bottom">5</property>
                         <property name="shadow_type">in</property>
                         <child>
-                          <object class="GtkTextView" id="codeTextview">
-                            <property name="visible">True</property>
-                            <property name="can_focus">True</property>
-                            <property name="buffer">codeBuffer</property>
-                          </object>
+                          <placeholder/>
                         </child>
                       </object>
                     </child>
@@ -118,7 +138,6 @@
                             <property name="yalign">0.4699999988079071</property>
                             <property name="active">True</property>
                             <property name="draw_indicator">True</property>
-                            <property name="group">dynamicButton</property>
                           </object>
                           <packing>
                             <property name="left_attach">0</property>
@@ -154,7 +173,6 @@
                             <property name="xalign">0</property>
                             <property name="active">True</property>
                             <property name="draw_indicator">True</property>
-                            <property name="group">deepButton</property>
                           </object>
                           <packing>
                             <property name="left_attach">1</property>
@@ -271,7 +289,10 @@
                       <object class="GtkTextView" id="currLineView">
                         <property name="visible">True</property>
                         <property name="can_focus">True</property>
+                        <property name="editable">False</property>
+                        <property name="cursor_visible">False</property>
                         <property name="buffer">currLineBuffer</property>
+                        <property name="accepts_tab">False</property>
                       </object>
                       <packing>
                         <property name="expand">False</property>
@@ -293,7 +314,9 @@
                     <property name="can_focus">True</property>
                     <property name="margin_left">5</property>
                     <property name="margin_top">5</property>
-                    <property name="margin_bottom">5</property>
+                    <property name="margin_bottom">4</property>
+                    <property name="hexpand">True</property>
+                    <property name="vexpand">True</property>
                     <property name="shadow_type">in</property>
                     <child>
                       <object class="GtkViewport" id="viewport2">

@@ -1,4 +1,5 @@
 import Graphics.UI.Gtk
+import Graphics.UI.Gtk.SourceView
 import Data.List(sortBy,intersperse)
 import Control.Monad.IO.Class
 import Parser
@@ -70,9 +71,9 @@ drawClosure vals = do
 						translate 60 0
 						return (n+1)
 
-stackUnit :: String -> [SymbolValue] -> Int -> Int -> Render ()
-stackUnit _ [] _ _ = error "empty Value"
-stackUnit name (value:oldVal) pos n = do
+stackUnit :: String -> [SymbolValue] -> Int -> Int -> Bool -> Render ()
+stackUnit _ [] _ _ _ = error "empty Value"
+stackUnit name (value:oldVal) pos n isDeep = do
 		Cairo.rectangle 0 0 stackWidth stackHeigth
 		(\(r,g,b) -> setSourceRGB r g b) $ chooseColor n
 		fill
@@ -90,7 +91,7 @@ stackUnit name (value:oldVal) pos n = do
 		Cairo.rectangle 0 0 stackWidth stackHeigth
 		stroke
 		case value of
-			ValFun _ _ _ _ (Just m) -> drawClosure m
+			ValFun _ _ _ _ (Just m) -> when isDeep $ drawClosure m
 			_ -> return ()
 			where
 				varText = name ++ " = " ++ show value ++ " "
@@ -130,42 +131,48 @@ staticChainDraw headers a b = do
 
 
 myDraw ::  Maybe Logunit -> Render ()
-myDraw Nothing = return ()
+myDraw Nothing = do
+		setSourceRGB 1 1 1
+		paint
+
 myDraw (Just logUnit) = do
+		setSourceRGB 1 1 1
+		paint
+
 		setSourceRGB 0 0 0
-		moveTo 10 10
-		showText $ show $ logInst logUnit
 		save
-		translate 30 30
-		(_,_,_,headers) <- F.foldlM stackDraw (0,0,0,M.empty) (S.viewl stackSeq)   
+		translate 30 10
+		(_,_,headers) <- F.foldlM stackDraw (0,0,M.empty) (S.viewl stackSeq)   
 		restore
 		save
-		translate 30 40
-		foldM_ (\a b -> staticChainDraw headers a b >> return b) "" (map symtableName chain)
+		translate 30 20
+		when isStatic $ foldM_ (\a b -> staticChainDraw headers a b >> return b) "" (map symtableName chain)
 		restore
 			where
 				f  = S.fromList . map go . sortBy (\a b ->compare (fst $ snd a) (fst $snd b)). M.toList
 				go (k,(n,(t,v))) = DrawStackUnit (k ++ ":" ++ show t) v n
 				stackSeq = F.foldMap (\x -> (DrawHeader $ symtableName x) S.<| f (symtableValues x) ) $tail $ reverse  $  envStack $ logEnv  logUnit
-				stackDraw (n,m,h,headers) (DrawHeader s) = stackHeader s h  >> translate 0 stackHeigth >> return (n+1,m,h+1,M.insert s n headers)
-				stackDraw (n,m,h,headers) (DrawStackUnit name val pos) = stackUnit name val pos (h-1) >> translate 0 stackHeigth >> return (n+1,m+1,h,headers)
+				stackDraw (n,h,headers) (DrawHeader s) = stackHeader s h  >> translate 0 stackHeigth >> return (n+1,h+1,M.insert s n headers)
+				stackDraw (n,h,headers) (DrawStackUnit name val pos) = stackUnit name val pos (h-1) isDeep >> translate 0 stackHeigth >> return (n+1,h,headers)
 				chain = init $ staticChain $ envStack $ logEnv logUnit
+				isStatic = logStatic logUnit
+				isDeep = logDeep logUnit
 
 
-drawStack ::  Builder -> IORef (t, Maybe Logunit, t1) -> IO ()
-drawStack builder logRef = do
-			drawArea <- builderGetObject builder castToDrawingArea "stackDrawArea"
-			drawWindow <- fromJust <$> widgetGetWindow drawArea
-			(_,logUnit,_) <- readIORef logRef
-			renderWithDrawWindow  drawWindow  (myDraw logUnit)
-			widgetSetSizeRequest drawArea (-1) (vars logUnit * floor stackHeigth + 50)
+{-drawStack ::  Builder -> IORef (t, Maybe Logunit, t1) -> IO ()-}
+drawStack :: TextBufferClass self =>Builder -> IORef (t, Maybe Logunit, t1) -> self -> Render ()
+drawStack builder logRef codeBuffer = do
+			drawArea <- liftIO $  builderGetObject builder castToDrawingArea "stackDrawArea"
+			
+			currLineBuffer <-  liftIO $ builderGetObject builder castToTextBuffer "currLineBuffer"
+			(_,logUnit,_) <-  liftIO $ readIORef logRef
+			maybe (return ()) ( liftIO . textBufferSetText currLineBuffer . show . logInst)  logUnit
+			maybe (return ()) (liftIO. textBufferPlaceCursor codeBuffer <=< liftIO . textBufferGetIterAtLine codeBuffer  <=< return . (flip (-) 1) . wGetLine . logInst) logUnit 
+			myDraw logUnit
+			liftIO $ widgetSetSizeRequest drawArea (-1) (vars logUnit * floor stackHeigth + 50)
 			where				
 				vars Nothing = -1
 				vars (Just logUnit) = F.foldl' (\acc x -> (acc+1) + M.size (symtableValues x))  0 $ envStack $logEnv logUnit
-
-			
-
-
 
 setSensitive ::  Builder -> Bool -> Bool -> IO ()
 setSensitive builder backT nextT = do
@@ -243,14 +250,14 @@ processExec builder logRef (_,_,logUnit)  = do
 			writeIORef logRef (S.empty,l,ls)
 			setSensitive builder False (not $S.null ls)
 
-runButtonAction :: Builder-> IORef (Log, Maybe  Logunit, Log) -> IO Bool
-runButtonAction builder logRef = do
+{-runButtonAction :: Builder-> IORef (Log, Maybe  Logunit, Log) -> IO Bool-}
+runButtonAction :: SourceBufferClass self =>Builder-> IORef (S.Seq a, Maybe Logunit, S.Seq Logunit) -> self -> IO Bool
+runButtonAction builder logRef codeBuffer = do
 			tempdir <- getTemporaryDirectory
 			(tempfile,tmph) <- openTempFile tempdir "run"
 			hDuplicateTo tmph stdout	
 			setSensitive builder False False
 			redrawStack builder
-			codeBuffer <-builderGetObject builder castToTextBuffer "codeBuffer"
 			outputBuffer <- builderGetObject builder castToTextBuffer "outputBuffer"
 			start <- textBufferGetStartIter codeBuffer
 			end <- textBufferGetEndIter codeBuffer
@@ -262,6 +269,7 @@ runButtonAction builder logRef = do
 				unless (null code) $ either print (either print (processExec builder logRef)) $ execString mode code
 				hFlush stdout
 				hSeek tmph AbsoluteSeek 0
+				{-sourceBufferCreateSourceMark codeBuffer Nothing "" =<< textBufferGetIterAtLine codeBuffer 0-}
 				textBufferSetText outputBuffer =<< hGetContents tmph
 				) (do
 					hClose tmph
@@ -270,11 +278,23 @@ runButtonAction builder logRef = do
 			return False
 
 
+sourceViewWidg ::  Builder -> SourceBuffer -> IO ()
+sourceViewWidg builder buffer= do 
+		sourceView <- sourceViewNewWithBuffer buffer
+		scroll <- builderGetObject builder castToScrolledWindow "scrolledCode"
+		sourceViewSetShowLineNumbers sourceView True
+		{-sourceViewSetShowLineMarks sourceView True-}
+		containerAdd scroll sourceView 
+
+		
+
 main ::  IO ()
 main = do 
 		initGUI
 		builder <- builderNew
-		builderAddFromFile builder  "resources/dymgtk.glade"
+		builderAddFromFile builder  "resources/dymgtk2.glade"
+		codeBuffer <- sourceBufferNew Nothing
+		sourceViewWidg builder codeBuffer
 		window <- builderGetObject builder castToWindow "window1"
 		window `on` deleteEvent $ liftIO mainQuit >> return False
 		runButton <- builderGetObject builder castToButton "runButton"
@@ -283,15 +303,13 @@ main = do
 		nextButton <- builderGetObject builder castToButton "nextButton"
 		endButton <- builderGetObject builder castToButton "endButton"
 		logRef <- newIORef (S.empty,Nothing,S.empty)
-		runButton `on` buttonReleaseEvent $ liftIO $ runButtonAction builder logRef
+		runButton `on` buttonReleaseEvent $ liftIO $ runButtonAction builder logRef codeBuffer
 		beginningButton `on` buttonReleaseEvent $ liftIO $ toBeg builder logRef
 		backButton `on` buttonReleaseEvent $ liftIO $ toBack builder logRef
 		nextButton `on` buttonReleaseEvent $ liftIO $ toNext builder logRef
 		endButton `on` buttonReleaseEvent $ liftIO $ toEnd builder logRef
 		setSensitive builder False False 
 		widgetShowAll window
-		drawWindow <- builderGetObject builder castToDrawingArea "stackDrawArea"
-		drawWindow `on` draw $ liftIO $ drawStack builder logRef 
-		scrollWindow <- builderGetObject builder castToScrolledWindow "drawScroll"
-		scrollWindow `on` scrollEvent $ liftIO $ redrawStack builder >> return False 
+		drawArea <- builderGetObject builder castToDrawingArea "stackDrawArea"
+		drawArea `on` draw $ drawStack builder logRef codeBuffer
 		mainGUI

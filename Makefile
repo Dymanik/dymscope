@@ -6,7 +6,7 @@ dymscope:
 	cd src ;make
 
 tests:
-	rm dymScope.tix || cd src; make tests
+	rm *.tix || cd src; make tests
 
 
 clean:

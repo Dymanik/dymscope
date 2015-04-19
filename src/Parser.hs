@@ -9,12 +9,11 @@ module Parser (
 			SymbolValue(..),
 			Environment,
 			Log,
-			Logunit,
-			logInst,
-			logEnv,
+			Logunit(..),
 			symtableValues,
 			symtableName,
 			envStack,
+			wGetLine,
 			staticChain
 			) where
 import Prelude hiding (foldr,concatMap,concat)
@@ -34,7 +33,9 @@ import Control.DeepSeq
 import System.IO.Unsafe
 import qualified Data.Sequence as S
 import Debug.Trace
+import Data.Monoid
 
+flagDebug = False
 
 type Ident = String
 {-type Type = String-}
@@ -47,6 +48,10 @@ data Block = Block Int Integer [Stmt]
 instance Eq Block where
 	(Block _ a _) == (Block _ b _) = a == b
 
+class WithLine a where
+	wGetLine :: a -> Int
+
+
 data Stmt =   DeclVar Int Ident Type
 			| DeclFunct Int Ident FunctArgs Type Block 
 			| Assign Int Ident Expr
@@ -56,10 +61,21 @@ data Stmt =   DeclVar Int Ident Type
 			| CallPrintLn Int Expr
 			| Return Int (Maybe Expr)
 			| EndProg
-	deriving Show
+	{-deriving Show-}
 
-{-instance Show Stmt where-}
-	{-show = stmtShow-}
+instance Show Stmt where
+	show = stmtShow
+
+instance WithLine Stmt where
+	wGetLine (DeclVar n _ _) = n
+	wGetLine (DeclFunct n _ _ _ _) = n
+	wGetLine (Assign n _ _) = n
+	wGetLine (CallProc n _ _) = n
+	wGetLine (ControlIf n _ _ _) = n
+	wGetLine (CallPrint n  _) = n
+	wGetLine (CallPrintLn n  _) = n
+	wGetLine (Return n _ ) = n
+	wGetLine (EndProg) = -1
 
 stmtShow (DeclVar l name typ) = show l ++ ": var "++name++" : "++ show typ
 stmtShow (DeclFunct l name fargs typ _) = show l ++ ": sub "++name++ fargs'++" : "++ show typ ++" {...}"
@@ -78,11 +94,11 @@ data Type =   TInt
 			| TBool
 			| TString
 			| TVoid
-			{-deriving (Eq)-}
-			deriving (Show,Eq)
+			deriving (Eq)
+			{-deriving (Show,Eq)-}
 
-{-instance Show Type where-}
-	{-show = typeShow	-}
+instance Show Type where
+	show = typeShow	
 	
 typeShow (TInt) = "int"
 typeShow (TFunct) = "sub"
@@ -97,10 +113,19 @@ data Expr =   Var Int Ident
 			| CallFunct Int Ident [Expr]
 			| UnaryExp Int UnaryOP Expr
 			| BinaryExp Int BinaryOP Expr Expr
-			deriving Show
+			{-deriving Show-}
 
-{-instance Show Expr where-}
-	{-show = exprShow-}
+instance Show Expr where
+	show = exprShow
+
+instance WithLine Expr where
+	wGetLine (Var n  _) = n
+	wGetLine (IntLiteral n  _) = n
+	wGetLine (BoolLiteral n  _) = n
+	wGetLine (StringLiteral n  _) = n
+	wGetLine (CallFunct n _ _) = n
+	wGetLine (UnaryExp n _ _) = n
+	wGetLine (BinaryExp n _ _ _) = n
 
 exprShow (Var _ name) = name
 exprShow (IntLiteral _ n) = show n
@@ -112,10 +137,10 @@ exprShow (BinaryExp _ op expr1 expr2 ) = "(" ++show expr1 ++" "++ show op ++" "+
 
 data UnaryOP = Negate
 			|  Not
-			deriving(Show)
+			{-deriving(Show)-}
 
-{-instance Show UnaryOP where-}
-	{-show = uopShow-}
+instance Show UnaryOP where
+	show = uopShow
 
 uopShow (Negate) = "-"
 uopShow (Not) = "!"
@@ -133,12 +158,12 @@ data BinaryOP =   Add {-Aritmetic-}
 				| GreaterTE
 				| Equals
 				| NEquals
-			deriving Show
+			{-deriving Show-}
 
-{-instance Show BinaryOP where-}
-	{-show = bopShow-}
+instance Show BinaryOP where
+	show = bopShow
 
-bopShow ::  BinaryOP -> [Char]
+bopShow ::  BinaryOP -> String
 bopShow (Add) = "+"
 bopShow (Mult) = "*"
 bopShow (Div) = "/"
@@ -199,7 +224,9 @@ whiteSpace = Tok.whiteSpace lexer
 --
 prog = whiteSpace *> manyTill stmt eof
 
-stmts = Block <$> (sourceLine <$> getPosition) <*> (updateState (+1) >> getState ) <*> many stmt
+stmts = Block <$> (sourceLine <$> getPosition) 
+				<*> (updateState (+1) >> getState ) 
+				<*> many stmt
 
 stmt =  declFunct
 	<|> funReturn
@@ -207,30 +234,48 @@ stmt =  declFunct
 	<|> (declVar
 	<|> callPrintLn
 	<|> callPrint
-	<|> (identifier >>=( \x-> flip CallProc x <$> (sourceLine <$> getPosition) <*> parens args <|> (flip Assign x <$>  (sourceLine <$> getPosition) <*> (reservedOp "=" *> expr) <?> "Subroutine Call o Assignment"))) 
+	<|> (identifier >>=( \x-> flip CallProc x <$> (sourceLine <$> getPosition) <*> parens args 
+						<|> (flip Assign x <$>  (sourceLine <$> getPosition) <*> (reservedOp "=" *> expr)
+						<?> "Subroutine Call o Assignment"))) 
 	) <* semi
 
-funReturn = Return <$> (sourceLine <$> getPosition) <*> (reserved "return" *> optionMaybe expr <* semi) <?> "return"
+funReturn = Return <$> (sourceLine <$> getPosition) 
+					<*> (reserved "return" *> optionMaybe expr <* semi) 
+					<?> "return"
 
 --Variable Declaration
-declVar =  DeclVar <$>  (sourceLine <$> getPosition) <*> (reserved "var" *> identifier) <*> (reservedOp ":" *> varType) <?> "variable declaration"
+declVar =  DeclVar <$>  (sourceLine <$> getPosition) 
+					<*> (reserved "var" *> identifier) 
+					<*> (varType) 
+					<?> "variable declaration"
 
-varType = (reserved "int" *> return TInt)
+varType =  reservedOp ":" *>(
+			(reserved "int" *> return TInt)
+		<|> (reserved "sub" *> return TFunct)
+		<|> (reserved "bool" *> return TBool))
+		<?> "type declaration"
+
+funcType =  reservedOp ":" *>(
+			(reserved "int" *> return TInt)
 		<|> (reserved "sub" *> return TFunct)
 		<|> (reserved "bool" *> return TBool)
-		<?> "type"
-
-funcType = varType <|> (reserved "Void" *> return TVoid)	
+		<|> (reserved "Void" *> return TVoid))
+		<?> "type declaration"
 
 --Function Declaration
-declFunct = DeclFunct <$>  (sourceLine <$> getPosition) <*> (reserved "sub" *> identifier) <*> parens functdeclargs <*> (reservedOp ":" *>funcType) <*> braces stmts <?> "function declaration"
+declFunct = DeclFunct <$>  (sourceLine <$> getPosition) 
+						<*> (reserved "sub" *> identifier)
+						<*> parens functdeclargs 
+						<*> (funcType) 
+						<*> braces stmts 
+						<?> "function declaration"
 
 
 {-
  -functdeclargs = commaSep identifier
  -}
 
-functdeclargs = commaSep (pair <$> identifier <*> (reservedOp ":" *> varType))
+functdeclargs = commaSep (pair <$> identifier <*> ( varType))
 		where
 			pair a b = (a,b)
 
@@ -238,39 +283,60 @@ functdeclargs = commaSep (pair <$> identifier <*> (reservedOp ":" *> varType))
 
 {-callProc = CallProc <$> identifier <*> parens args -}
 
-callPrint = CallPrint <$>  (sourceLine <$> getPosition) <*> (reserved "print" *> parens expr)
-callPrintLn = CallPrintLn <$>  (sourceLine <$> getPosition) <*> (reserved "printLn" *> parens expr)
+callPrint = CallPrint <$>  (sourceLine <$> getPosition) 
+						<*> (reserved "print" *> parens expr)
+callPrintLn = CallPrintLn <$>  (sourceLine <$> getPosition) 
+						<*> (reserved "printLn" *> parens expr)
+
 args = commaSep expr
 
 
-controlIf = ControlIf <$>  (sourceLine <$> getPosition) <*> (reserved "if" *> parens expr) <*> braces stmts <*> (reserved "else" *> braces stmts <|> Block <$> (sourceLine <$> getPosition) <*> getState <*> return [])
+controlIf = ControlIf <$>  (sourceLine <$> getPosition)
+					<*> (reserved "if" *> parens expr)
+					<*> braces stmts
+					<*> (reserved "else" *> braces stmts 
+							<|> Block <$> (sourceLine <$> getPosition) 
+										<*> getState <*> return [])
 
 --Expresion Parsers
 
 
 opTable ::  [[Operator Char st Expr]]
-opTable = [ [ prefix "-" (flip UnaryExp Negate), prefix "!" (flip UnaryExp Not)],
-			[ binary "*" (flip BinaryExp Mult) AssocLeft, binary "/" (flip BinaryExp Div) AssocLeft , binary "%" (flip BinaryExp Mod) AssocLeft ],
-			[ binary "+" (flip BinaryExp Add) AssocLeft, binary "-" (flip BinaryExp Minus) AssocLeft],
-			[ binary "<" (flip BinaryExp LessT) AssocLeft, binary "<=" (flip BinaryExp LessTE) AssocLeft , binary ">" (flip BinaryExp GreaterT) AssocLeft , binary ">=" (flip BinaryExp GreaterTE) AssocLeft],
-			[ binary "==" (flip BinaryExp Equals) AssocLeft, binary "!=" (flip BinaryExp NEquals) AssocLeft],
+opTable = [ [ prefix "-" (flip UnaryExp Negate),
+				prefix "!" (flip UnaryExp Not)],
+			[ binary "*" (flip BinaryExp Mult) AssocLeft,
+				binary "/" (flip BinaryExp Div) AssocLeft,
+				binary "%" (flip BinaryExp Mod) AssocLeft ],
+			[ binary "+" (flip BinaryExp Add) AssocLeft, 
+				binary "-" (flip BinaryExp Minus) AssocLeft],
+			[ binary "<" (flip BinaryExp LessT) AssocLeft,
+				binary "<=" (flip BinaryExp LessTE) AssocLeft,
+				binary ">" (flip BinaryExp GreaterT) AssocLeft,
+				binary ">=" (flip BinaryExp GreaterTE) AssocLeft],
+			[ binary "==" (flip BinaryExp Equals) AssocLeft,
+				binary "!=" (flip BinaryExp NEquals) AssocLeft],
 			[ binary "&&" (flip BinaryExp And) AssocLeft],
 			[ binary "||" (flip BinaryExp Or) AssocLeft]
 		  ]
 		  where
-		  	prefix op f  = Prefix (( reservedOp op >> f <$> (sourceLine <$> getPosition) )) 
-			binary op f  = Infix ((reservedOp op >> f <$> (sourceLine <$> getPosition) )) 
+		  	prefix op f  = Prefix (reservedOp op >> f <$> (sourceLine <$> getPosition)) 
+			binary op f  = Infix (reservedOp op >> f <$> (sourceLine <$> getPosition)) 
 
 
 expr =  buildExpressionParser opTable term
 
 term =  parens expr
 	<|> IntLiteral <$> (sourceLine <$> getPosition) <*> integer
-	<|> (reserved "true" >> BoolLiteral <$> (sourceLine <$> getPosition) <*> return True)
-	<|> (reserved "false" >> BoolLiteral <$> (sourceLine <$> getPosition) <*> return False)
+	<|> (reserved "true" >> BoolLiteral <$> (sourceLine <$> getPosition)
+										<*> return True)
+	<|> (reserved "false" >> BoolLiteral <$> (sourceLine <$> getPosition) 
+										<*> return False)
 	<|> StringLiteral <$> (sourceLine <$> getPosition) <*> stringLiteral
-	<|> (identifier >>=( \x-> flip CallFunct x <$>  (sourceLine <$> getPosition) <*> parens args <|> Var <$> (sourceLine <$> getPosition) <*> return x)) 
-	<?> "Expression"
+	<|> (identifier >>=( \x-> flip CallFunct x <$>  (sourceLine <$> getPosition)
+										<*> parens args 
+							<|> Var <$> (sourceLine <$> getPosition) 
+										<*> return x)) 
+	<?> "an expression"
 
 --------------evaluation --------
 
@@ -293,23 +359,24 @@ data SymbolValue =	Uninitialized
 						valFunType::Type,
 						valFunBlock::Block,
 						valFunParent::(String,Int),
-						valFunEnv::(Maybe (Map String (Integer,Int)))
+						valFunEnv::Maybe (Map String (Integer,Int))
 					}
 				|	Void
 				|	Exit SymbolValue
-				deriving (Show,Eq)
-				{-deriving (Eq)-}
+				{-deriving (Show,Eq)-}
+				deriving (Eq)
 
 instance NFData SymbolValue where
 	rnf a = a `seq` ()
 
-{-instance Show SymbolValue where-}
-	{-show = showValue-}
+instance Show SymbolValue where
+	show = showValue
 
 
 data Environment = Environment {
 					envStack :: [SymbolTable],
 					{-envCallStack  :: [(String,[SymbolTable])],-}
+					envRetType :: [Type],
 					envScope :: Integer
 				}			
 				deriving Show
@@ -325,6 +392,8 @@ data ScopeConfig = ScopeConfig {
 
 
 data Logunit = Logunit {
+			logStatic::Bool,
+			logDeep::Bool,
 			logInst::Stmt,
 			logEnv::Environment
 }
@@ -348,6 +417,34 @@ instance Show EvalError where
 	show (AlreadyDeclared l n) = show l ++ ": the name  "++show n++" is already declared in this scope."
 
 
+{-getFreeVariables :: FunctArgs -> Block -> [String]-}
+
+{-getFreeVariables fargs (Block _ _ blk) = snd $ head $ map (go) blk-}
+getFreeVariables ::  FunctArgs -> Block -> Map Ident Ident
+getFreeVariables fargs (Block _ _ blk) = snd $ Data.Foldable.foldl (\(decl,acc) (new,free) -> (mappend decl new, mappend (difference free decl) (acc) )) (mempty,mempty) $ map go blk
+				where
+					go :: Stmt -> (Map Ident Ident,Map Ident Ident)
+					go (DeclVar _ ident _) = (Map.singleton ident ident,mempty)
+					go (DeclFunct _ ident fargs _ blk) = (Map.singleton ident ident,getFreeVariables fargs blk)
+					go (Assign _ ident expr) = (mempty,mappend (Map.singleton ident ident) (goexpr expr))
+					go (CallProc _ ident args) = (mempty,mappend (Map.singleton ident ident) (foldMap goexpr args))
+					go (ControlIf _ bexpr tblk fblk) = (mempty, mappend (getFreeVariables [] tblk) (getFreeVariables [] fblk))
+					go (CallPrint _ expr) = (mempty, goexpr expr)
+					go (CallPrintLn _ expr) = (mempty, goexpr expr)
+					go (Return _ expr) = (mempty, maybe mempty goexpr expr)
+
+					goexpr (Var _ ident) = Map.singleton ident ident
+					goexpr (IntLiteral{} ) = mempty
+					goexpr (BoolLiteral{}) = mempty
+					goexpr (StringLiteral{}) = mempty
+					goexpr (CallFunct _ ident args) = mappend (Map.singleton ident ident) (foldMap goexpr args)
+					goexpr (UnaryExp _ _ expr) = goexpr expr
+					goexpr (BinaryExp _ _ expr1 expr2) = mappend (goexpr expr1) (goexpr expr2)
+
+addLog :: (Applicative m,Monad m) => Stmt -> RWS.RWST ScopeConfig Log Environment m ()
+addLog inst = RWS.tell =<< (\a b c d -> S.singleton $ Logunit a b c d ) <$> RWS.asks (staticScoping) <*> RWS.asks deepBinding <*> return inst <*>  RWS.get
+{-Logunit <$> RWS.asks (staticScoping) <*> RWS.asks deepBinding <*> return inst <*> RWS.get-}
+
 
 
 getBindings :: (String,Int) -> RWS.RWST ScopeConfig Log Environment (Either EvalError) (Map String (Integer,Int))
@@ -357,7 +454,7 @@ getBindings (parent,off) =  RWS.asks staticScoping >>= \x-> if x
 					where
 						go = union . (\y -> fmap (\(n,_) -> (symtableStackPos y,n)) (symtableValues y) )
 						g (y:ys) = y{symtableValues=cleanMap y} : ys
-						cleanMap y = Map.filter (\(n,_) ->   n <= ((off) + symtableFramePointer y)) (symtableValues y)
+						cleanMap y = Map.filter (\(n,_) ->   n <= (off + symtableFramePointer y)) (symtableValues y)
 
 dynShallowScope ::  ScopeConfig
 dynShallowScope = ScopeConfig False False lookupDyn assignDyn
@@ -375,17 +472,17 @@ staticChain :: [SymbolTable] -> [SymbolTable]
 staticChain [] = []
 staticChain (x:xs) = x : f xs
 				where 
-					f = staticChain . g . dropWhile (\n-> symtableName n /= (fst $ symtableLexicalParent x))
+					f = staticChain . g . dropWhile (\n-> symtableName n /= fst (symtableLexicalParent x))
 					g [] = []
 					g (y:ys) = y{symtableValues=cleanMap y} : ys
-					cleanMap y = Map.filter (\(n,_) ->  (fromIntegral n) <= ((fromIntegral $ snd $ symtableLexicalParent x) + symtableFramePointer y)) (symtableValues y)
+					cleanMap y = Map.filter (\(n,_) ->  fromIntegral n <= (fromIntegral (snd $ symtableLexicalParent x) + symtableFramePointer y)) (symtableValues y)
 
 
 {- dinamic scopes -}
 lookupDyn :: String -> RWS.RWST ScopeConfig Log Environment (Either EvalError) (Maybe (Type, SymbolValue))
 lookupDyn name = RWS.asks deepBinding >>= (\x -> if x
-					then fmap (\(_,(t,(v:_))) -> (t,v)) . findDeep <$> RWS.gets envStack 
-					else fmap (\(_,(t,(v:_))) -> (t,v)) . find' <$> RWS.gets envStack
+					then fmap (\(_,(t, v:_ )) -> (t,v)) . findDeep <$> RWS.gets envStack 
+					else fmap (\(_,(t, v:_ )) -> (t,v)) . find' <$> RWS.gets envStack
 				)
 				where
 					findDeep [] = Nothing 
@@ -416,8 +513,8 @@ assignDyn name value  = RWS.asks deepBinding >>= (\x -> if x
 {- static scope -}
 lookupStatic :: String -> RWS.RWST ScopeConfig Log Environment (Either EvalError) (Maybe (Type, SymbolValue))
 lookupStatic name = RWS.asks deepBinding >>= \x-> if x
-						then (\x -> fmap (\(_,(t,(x:_))) -> (t,x)) . findDeep x ) <$> RWS.gets envStack <*> RWS.gets (staticChain . envStack)
-						else fmap (\(_,(t,(x:_))) -> (t,x)) . find'  <$> RWS.gets (staticChain . envStack)
+						then (\x -> fmap (\(_,(t, x:_ )) -> (t,x)) . findDeep x ) <$> RWS.gets envStack <*> RWS.gets (staticChain . envStack)
+						else fmap (\(_,(t, x:_ )) -> (t,x)) . find'  <$> RWS.gets (staticChain . envStack)
 					where
 						findDeep  _ [] =  Nothing
 						findDeep  stack (x:xs) = Map.lookup name (symtableValues x) `mplus` maybe (findDeep stack xs) (aux stack . fst <=< Map.lookup name) (symtableEnv x)
@@ -433,17 +530,17 @@ assignStatic name value  =  do
 							else RWS.modify (\x -> x{envStack=assign (-1) $ envStack x})
 					where
 						assignDeep _ [] = error (name ++ "variable not in scope")
-						assignDeep parent l@(x:xs) = case clean parent (x) of
-									(False,(Nothing , _)) -> maybe (x: next assignDeep (symtableLexicalParent x) xs) (aux l . fst . fromJust . Map.lookup name) (symtableEnv x)
-									(True,(Just _ , m))  -> x{symtableValues=m}:xs
+						assignDeep parent l@(x:xs) = case clean parent x of
+									(False, _) -> maybe (x: next assignDeep (symtableLexicalParent x) xs) (aux l . fst . fromJust . Map.lookup name) (symtableEnv x)
+									(True, m)  -> x{symtableValues=m}:xs
 						aux l n = (\(x,y) -> x ++ assign (-1) y) $ break ((n==) . symtableStackPos) l
 						assign _ [] = error (name ++ "variable not in scope")
-						assign parent (x:xs) = case clean parent (x) of
+						assign parent (x:xs) = case clean parent x of
 									(False, _)	-> x : next assign (symtableLexicalParent x) xs
-									(True,(Just _,m))	-> x{symtableValues=m}:xs
+									(True,m)	-> x{symtableValues=m}:xs
 						clean (-1) table = (member name $ symtableValues table , assign' $ symtableValues table)
-						clean (offset) table = (member name $ Map.filter (\(n,_) -> n <= offset + (symtableFramePointer table)) (symtableValues table) ,assign' $ symtableValues table) 
-						assign' = insertLookupWithKey (\_ (_,(tnew,a)) (n,(told,old)) -> if tnew==told then (n,(told,a++old)) else error ("expected" ++ show told ++ " got " ++ show tnew)) name value'
+						clean (offset) table = (member name $ Map.filter (\(n,_) -> n <= offset + symtableFramePointer table) (symtableValues table) ,assign' $ symtableValues table) 
+						assign' = insertWithKey (\_ (_,(tnew,a)) (n,(told,old)) -> if tnew==told then (n,(told,a++old)) else error ("expected" ++ show told ++ " got " ++ show tnew)) name value'
 						next f (p,off)  = (\(x,y) -> x ++ f off y) . span (\n -> symtableName n /= p)
 						value' = (\(b,c) -> (0,(b,[c]))) value
 
@@ -457,18 +554,18 @@ newScope :: String -> (String,Int) -> Maybe (Map String (Integer,Int)) -> RWS.RW
 newScope name (parent,off) env= do
 				pos <- stackPos
 				fp <- stackSP
-				off' <- if(off<0) then offset else return off
+				off' <- if off<0 then offset else return off
 				RWS.modify (\x -> x{envStack= emptySymtable env pos fp name  (parent,off') : envStack x,envScope=1+envScope x}) 
 			where
 				stackPos = RWS.gets envScope 
 				offset =  RWS.gets ( Map.size . symtableValues . head . envStack)
-				stackSP  = (\x -> symtableFramePointer x + (Map.size (symtableValues x))) <$>  RWS.gets (head . envStack) 
+				stackSP  = (\x -> symtableFramePointer x + Map.size (symtableValues x)) <$>  RWS.gets (head . envStack) 
 
 exitScope :: RWS.RWST ScopeConfig Log Environment (Either EvalError) ()
 exitScope	= RWS.modify (\x -> x{envStack = tail (envStack x) ,envScope=envScope x-1})
 
-insertSymbol :: Int->String -> (Type, SymbolValue)-> RWS.RWST ScopeConfig Log Environment (Either EvalError) ()
-insertSymbol lineno name val  = do
+insertSymbol :: Int->Bool -> String -> (Type, SymbolValue)  -> RWS.RWST ScopeConfig Log Environment (Either EvalError) ()
+insertSymbol lineno toBind name val  = do
 						env<- RWS.get
 						sp <- stackSP
 						val' <- getValWithBindings 
@@ -482,11 +579,13 @@ insertSymbol lineno name val  = do
 				insert' a b (x:xs) = x{symtableValues=insert a b (symtableValues x)} : xs
 				stackSP  = (\x -> symtableFramePointer x + fromIntegral (Map.size (symtableValues x))) <$>  RWS.gets (head . envStack) 
 				getValWithBindings = case val of
-					(t,vf@(ValFun{})) -> do
-									pos <- RWS.gets (symtableStackPos . head .envStack)
-									sp <- stackSP
-									binds <- getBindings (valFunParent vf)
-									return (t,[vf{valFunEnv=Just (insert name (pos,sp+1) binds)}])
+					(t,vf@(ValFun{})) -> if toBind
+									then do
+										pos <- RWS.gets (symtableStackPos . head .envStack)
+										sp <- stackSP
+										binds <- flip intersection (getFreeVariables (valFunargs vf) (valFunBlock vf)) <$> getBindings (valFunParent vf)
+										return (t,[vf{valFunEnv=Just (insert name (pos,sp) binds)}])
+									else return (t,[vf{valFunEnv=Nothing}])
 					(t,v) -> return (t,[v])
 
 assignSymbol :: String-> (Type, SymbolValue)-> RWS.RWST ScopeConfig Log Environment (Either EvalError) ()
@@ -500,7 +599,11 @@ getCurrentStack = RWS.gets ((\y -> (symtableName y, Map.size $ symtableValues y)
 
 
 newEnvironment ::  Environment
-newEnvironment = Environment [emptySymtable Nothing (-1) 0  "Global" ("",0)]  0 
+newEnvironment = Environment {
+						envStack=[emptySymtable Nothing (-1) 0  "Global" ("",0)],
+						envScope=0,
+						envRetType=[TVoid]
+				}
 
 printVal ::  Monad m => SymbolValue -> m SymbolValue
 printVal x = trace' (showValue x) (return Void)
@@ -523,37 +626,48 @@ showValue (Uninitialized) = "Uninitialized"
 showValue Exit{} = "exit"
 showValue ValFun{valFunargs=fargs,valFunType=typ} = "("++ concatMap ((++",") . show . snd) fargs ++"):"++show typ
 
+valueType :: SymbolValue -> Type
+valueType (Void{}) = TVoid
+valueType (ValFun{}) = TFunct
+valueType (ValBool{}) = TBool
+valueType (ValInt{}) = TInt
+valueType (ValString{}) = TString
+valueType (Uninitialized) = error "uninitialized value on return"
+valueType (Exit v) =  valueType v
+
+
 evalProg :: ScopeConfig -> [Stmt] ->Either EvalError (SymbolValue, Environment, Log)
 evalProg conf block = RWS.runRWST (do
 					ret<-evalBlock (Block 0 0 block) "Global"
-					RWS.get >>= RWS.tell . S.singleton . Logunit EndProg
+					addLog EndProg
 					return ret) conf newEnvironment
 
 eval :: Stmt-> RWS.RWST ScopeConfig Log Environment (Either EvalError) SymbolValue
 eval inst@(CallPrint _ e) = do
-				RWS.get >>= RWS.tell . S.singleton . Logunit inst
+				addLog inst
 				evalType e
 				evalExpr e >>= printVal
 eval inst@(CallPrintLn _ e) = do
-				RWS.get >>= RWS.tell . S.singleton . Logunit inst
+				addLog inst
 				evalType e
 				evalExpr e >>= printValLn
 eval inst@(DeclVar lineno name typ) =do
-				RWS.get >>= RWS.tell . S.singleton . Logunit inst
-				insertSymbol lineno name (typ,Uninitialized) 
+				addLog inst
+				insertSymbol lineno False name (typ,Uninitialized) 
 				return Void
 eval inst@(DeclFunct lineno name arg typ block) = do
-				RWS.get >>= RWS.tell . S.singleton . Logunit inst
-				getCurrentStack >>= (\x -> insertSymbol lineno name (TFunct, ValFun{
-																		valFunargs=arg,
-																		valFunType=typ,
-																		valFunBlock=block,
-																		valFunParent=x,
-																		valFunEnv=Nothing
-																		}))
+				addLog inst
+				getCurrentStack >>= 
+						(\x -> insertSymbol lineno False name (TFunct, ValFun{
+																valFunargs=arg,
+																valFunType=typ,
+																valFunBlock=block,
+																valFunParent=x,
+																valFunEnv=Nothing
+															})) 
 				return Void
 eval inst@(Assign lineno name e) = do
-				RWS.get >>= RWS.tell . S.singleton . Logunit inst
+				addLog inst
 				(t1,_)<-lookupSymbol lineno name
 				t2<- evalType e 
 				if t1/=t2
@@ -563,16 +677,20 @@ eval inst@(Assign lineno name e) = do
 						assignSymbol name x
 						return Void 
 eval inst@(CallProc lineno name arg) = do
-				RWS.get >>= RWS.tell . S.singleton . Logunit inst
+				addLog inst
 				evalType (CallFunct lineno name arg)
 				lookupSymbol lineno name >>= (\x -> case x of
 					(TFunct,ValFun{
 								valFunargs=fargs,
 								valFunBlock=block@(Block lineno n _),
-								valFunParent=parent,valFunEnv=env
+								valFunParent=parent,
+								valFunEnv=env,
+								valFunType=typ
 								}) -> do 
 									mapM evalExpr arg >>= insertArgs n parent fargs env
+									RWS.modify (\env->env{envRetType=typ:envRetType env})
 									ret <- evalBlock block name
+									RWS.modify (\env->env{envRetType=tail $ envRetType env})
 									exitScope
 									return ret
 					(t,_) -> RWS.lift $ Left $ WrongType lineno t TFunct 
@@ -580,25 +698,33 @@ eval inst@(CallProc lineno name arg) = do
 						where
 							insertArgs n parent fargs env args' = do 
 								newScope (name++"|"++show n++"|args") parent env
-								zipWithM (\(nam,t) v-> insertSymbol lineno nam (t,v)) fargs args' 
+								zipWithM (\(nam,t) v-> insertSymbol lineno True  nam (t,v)) fargs args' 
 								
-eval inst@(ControlIf _  cond tblock fblock) = do
-								RWS.get >>= RWS.tell . S.singleton . Logunit inst;
-								(ValBool x) <- evalExpr cond;
+eval inst@(ControlIf lineno cond tblock fblock) = do
+								addLog inst
+								evalType cond >>= (\x -> unless (x == TBool) (RWS.lift $ Left $ WrongType lineno TBool x))
+								(ValBool x) <- evalExpr cond
 								if x then evalBlock tblock "ifTbranch" else evalBlock fblock "ifFbranch"
-eval inst@(Return _ a) = RWS.get >>= RWS.tell . S.singleton . Logunit inst >>liftM Exit (maybe (return Void)  evalExpr a)
+eval inst@(Return _ a) = addLog inst >>liftM Exit (maybe (return Void)  evalExpr a)
 
-evalBlock :: Block-> String -> RWS.RWST ScopeConfig Log Environment (Either EvalError) SymbolValue
+evalBlock :: Block->  String -> RWS.RWST ScopeConfig Log Environment (Either EvalError) SymbolValue
 evalBlock (Block _ n b) name = do
 						getCurrentStack >>= flip (newScope (name++"|"++show n)) Nothing
-						flip trace (return ()) . show =<< RWS.get
-						eval' b >>= (\x-> exitScope >> return x)
+						when (flagDebug) $ flip trace (return ()) . show =<< RWS.get
+						retVal <-eval' b
+						exitScope
+						return retVal
 		where
 			eval' [] = return Void
-			eval' (x:xs) = eval x >>=(\ret -> case ret of
-					 								Void -> eval' xs
-													Exit val -> return val
-													_ -> return ret)
+			eval' (x:xs) = do
+						ret <- eval x 
+						expectedType <- RWS.gets (head . envRetType)
+						let retType = valueType ret in
+							unless (expectedType == retType) (RWS.lift $ Left $ WrongType (wGetLine x) expectedType retType)
+						case ret of
+							Void -> eval' xs
+							Exit val -> return val
+							_ -> eval' xs
 
 
 evalType :: Expr -> RWS.RWST ScopeConfig Log Environment (Either EvalError) Type
