@@ -23,7 +23,7 @@ import Text.ParserCombinators.Parsec.Language
 import Text.ParserCombinators.Parsec.Expr
 import Data.Map as Map hiding (map,foldr)
 import Data.Functor
-import Data.List (intercalate)
+import Data.List (intercalate,isSuffixOf)
 import Data.Maybe
 import Data.Foldable
 import Control.Applicative
@@ -35,6 +35,7 @@ import qualified Data.Sequence as S
 import Debug.Trace
 import Data.Monoid
 
+flagDebug ::  Bool
 flagDebug = False
 
 type Ident = String
@@ -77,16 +78,17 @@ instance WithLine Stmt where
 	wGetLine (Return n _ ) = n
 	wGetLine (EndProg) = -1
 
+stmtShow ::  Stmt -> String
 stmtShow (DeclVar l name typ) = show l ++ ": var "++name++" : "++ show typ
 stmtShow (DeclFunct l name fargs typ _) = show l ++ ": sub "++name++ fargs'++" : "++ show typ ++" {...}"
 	where
 		fargs' = "(" ++ intercalate "," (map (\(x,y) -> x ++":" ++ show y) fargs) ++ ")"
-stmtShow (Assign l name expr) = show l ++ ": "++name++" = "++ show expr
+stmtShow (Assign l name expression) = show l ++ ": "++name++" = "++ show expression
 stmtShow (CallProc l name fargs) = show l ++ ": "++name++" ("++ intercalate "," (map show fargs) ++ ") "
-stmtShow (ControlIf l expr _ _) = show l ++ ": if ("++show expr++") "
-stmtShow (CallPrint l expr) = show l ++ ": print("++show expr++") "
-stmtShow (CallPrintLn l expr) = show l ++ ": printLn("++show expr++") "
-stmtShow (Return l expr) = show l ++ ": return "++show expr
+stmtShow (ControlIf l expression _ _) = show l ++ ": if ("++show expression++") "
+stmtShow (CallPrint l expression) = show l ++ ": print("++show expression++") "
+stmtShow (CallPrintLn l expression) = show l ++ ": printLn("++show expression++") "
+stmtShow (Return l expression) = show l ++ ": return "++show expression
 stmtShow (EndProg) = "Program ended"
 
 data Type =   TInt
@@ -100,6 +102,7 @@ data Type =   TInt
 instance Show Type where
 	show = typeShow	
 	
+typeShow ::  Type -> String
 typeShow (TInt) = "int"
 typeShow (TFunct) = "sub"
 typeShow (TBool) = "bool"
@@ -127,12 +130,13 @@ instance WithLine Expr where
 	wGetLine (UnaryExp n _ _) = n
 	wGetLine (BinaryExp n _ _ _) = n
 
+exprShow ::  Expr -> Ident
 exprShow (Var _ name) = name
 exprShow (IntLiteral _ n) = show n
 exprShow (BoolLiteral _ b) = show b
 exprShow (StringLiteral _ s) = s
 exprShow (CallFunct _ name fargs) = name ++ "(" ++ intercalate "," (map show fargs) ++ ")"
-exprShow (UnaryExp _ op expr) = "(" ++ show op ++" "++ show expr ++ ")"
+exprShow (UnaryExp _ op expr') = "(" ++ show op ++" "++ show expr' ++ ")"
 exprShow (BinaryExp _ op expr1 expr2 ) = "(" ++show expr1 ++" "++ show op ++" "++ show expr2 ++ ")"
 
 data UnaryOP = Negate
@@ -142,6 +146,7 @@ data UnaryOP = Negate
 instance Show UnaryOP where
 	show = uopShow
 
+uopShow ::  UnaryOP -> String
 uopShow (Negate) = "-"
 uopShow (Not) = "!"
 
@@ -206,7 +211,6 @@ dymanikStyle = emptyDef {
 		}
 
 lexer = Tok.makeTokenParser dymanikStyle
-{-comma = Tok.comma lexer-}
 semi = Tok.semi lexer
 reserved = Tok.reserved lexer
 reservedOp = Tok.reservedOp lexer
@@ -217,7 +221,6 @@ braces = Tok.braces lexer
 parens = Tok.parens lexer 
 commaSep = Tok.commaSep lexer 
 whiteSpace = Tok.whiteSpace lexer 
-
 
 
 -- Parser Grammar
@@ -421,24 +424,25 @@ instance Show EvalError where
 
 {-getFreeVariables fargs (Block _ _ blk) = snd $ head $ map (go) blk-}
 getFreeVariables ::  FunctArgs -> Block -> Map Ident Ident
-getFreeVariables fargs (Block _ _ blk) = snd $ Data.Foldable.foldl (\(decl,acc) (new,free) -> (mappend decl new, mappend (difference free decl) (acc) )) (mempty,mempty) $ map go blk
+getFreeVariables fargs (Block _ _ blk) = flip Map.difference (Map.fromList fargs) $ snd $ Data.Foldable.foldl (\(decl,acc) (new,free) -> (mappend decl new, mappend (difference free decl) (acc) )) (mempty,mempty) $ map go blk
 				where
 					go :: Stmt -> (Map Ident Ident,Map Ident Ident)
 					go (DeclVar _ ident _) = (Map.singleton ident ident,mempty)
-					go (DeclFunct _ ident fargs _ blk) = (Map.singleton ident ident,getFreeVariables fargs blk)
-					go (Assign _ ident expr) = (mempty,mappend (Map.singleton ident ident) (goexpr expr))
-					go (CallProc _ ident args) = (mempty,mappend (Map.singleton ident ident) (foldMap goexpr args))
-					go (ControlIf _ bexpr tblk fblk) = (mempty, mappend (getFreeVariables [] tblk) (getFreeVariables [] fblk))
-					go (CallPrint _ expr) = (mempty, goexpr expr)
-					go (CallPrintLn _ expr) = (mempty, goexpr expr)
-					go (Return _ expr) = (mempty, maybe mempty goexpr expr)
+					go (DeclFunct _ ident fargs' _ blok) = (Map.singleton ident ident,getFreeVariables fargs' blok)
+					go (Assign _ ident expr') = (mempty,mappend (Map.singleton ident ident) (goexpr expr'))
+					go (CallProc _ ident args') = (mempty,mappend (Map.singleton ident ident) (foldMap goexpr args'))
+					go (ControlIf _ bexpr tblk fblk) = (mempty,(goexpr bexpr) `mappend` (getFreeVariables [] tblk) `mappend` (getFreeVariables [] fblk))
+					go (CallPrint _ expr') = (mempty, goexpr expr')
+					go (CallPrintLn _ expr') = (mempty, goexpr expr')
+					go (Return _ expr') = (mempty, maybe mempty goexpr expr')
+					go (EndProg) = error "endProg is a dummy value"
 
 					goexpr (Var _ ident) = Map.singleton ident ident
 					goexpr (IntLiteral{} ) = mempty
 					goexpr (BoolLiteral{}) = mempty
 					goexpr (StringLiteral{}) = mempty
-					goexpr (CallFunct _ ident args) = mappend (Map.singleton ident ident) (foldMap goexpr args)
-					goexpr (UnaryExp _ _ expr) = goexpr expr
+					goexpr (CallFunct _ ident args') = mappend (Map.singleton ident ident) (foldMap goexpr args')
+					goexpr (UnaryExp _ _ expr') = goexpr expr'
 					goexpr (BinaryExp _ _ expr1 expr2) = mappend (goexpr expr1) (goexpr expr2)
 
 addLog :: (Applicative m,Monad m) => Stmt -> RWS.RWST ScopeConfig Log Environment m ()
@@ -450,9 +454,10 @@ addLog inst = RWS.tell =<< (\a b c d -> S.singleton $ Logunit a b c d ) <$> RWS.
 getBindings :: (String,Int) -> RWS.RWST ScopeConfig Log Environment (Either EvalError) (Map String (Integer,Int))
 getBindings (parent,off) =  RWS.asks staticScoping >>= \x-> if x
 				then  foldr go Map.empty <$>RWS.gets (staticChain . g .  dropWhile ((/= parent).symtableName) . envStack)
-				else  foldr go Map.empty <$>RWS.gets envStack
+				else  foldr go Map.empty <$>RWS.gets (dropWhile (\y->"|args" `isSuffixOf` symtableName y) . envStack)
 					where
 						go = union . (\y -> fmap (\(n,_) -> (symtableStackPos y,n)) (symtableValues y) )
+						g [] = error "empty stack / Parent not Found"
 						g (y:ys) = y{symtableValues=cleanMap y} : ys
 						cleanMap y = Map.filter (\(n,_) ->   n <= (off + symtableFramePointer y)) (symtableValues y)
 
@@ -513,8 +518,8 @@ assignDyn name value  = RWS.asks deepBinding >>= (\x -> if x
 {- static scope -}
 lookupStatic :: String -> RWS.RWST ScopeConfig Log Environment (Either EvalError) (Maybe (Type, SymbolValue))
 lookupStatic name = RWS.asks deepBinding >>= \x-> if x
-						then (\x -> fmap (\(_,(t, x:_ )) -> (t,x)) . findDeep x ) <$> RWS.gets envStack <*> RWS.gets (staticChain . envStack)
-						else fmap (\(_,(t, x:_ )) -> (t,x)) . find'  <$> RWS.gets (staticChain . envStack)
+						then (\y -> fmap (\(_,(t, z:_ )) -> (t,z)) . findDeep y ) <$> RWS.gets envStack <*> RWS.gets (staticChain . envStack)
+						else fmap (\(_,(t, y:_ )) -> (t,y)) . find'  <$> RWS.gets (staticChain . envStack)
 					where
 						findDeep  _ [] =  Nothing
 						findDeep  stack (x:xs) = Map.lookup name (symtableValues x) `mplus` maybe (findDeep stack xs) (aux stack . fst <=< Map.lookup name) (symtableEnv x)
@@ -682,15 +687,15 @@ eval inst@(CallProc lineno name arg) = do
 				lookupSymbol lineno name >>= (\x -> case x of
 					(TFunct,ValFun{
 								valFunargs=fargs,
-								valFunBlock=block@(Block lineno n _),
+								valFunBlock=block@(Block _lineno' n _),
 								valFunParent=parent,
 								valFunEnv=env,
 								valFunType=typ
 								}) -> do 
 									mapM evalExpr arg >>= insertArgs n parent fargs env
-									RWS.modify (\env->env{envRetType=typ:envRetType env})
+									RWS.modify (\env'->env'{envRetType=typ:envRetType env'})
 									ret <- evalBlock block name
-									RWS.modify (\env->env{envRetType=tail $ envRetType env})
+									RWS.modify (\env'->env'{envRetType=tail $ envRetType env'})
 									exitScope
 									return ret
 					(t,_) -> RWS.lift $ Left $ WrongType lineno t TFunct 
@@ -706,6 +711,7 @@ eval inst@(ControlIf lineno cond tblock fblock) = do
 								(ValBool x) <- evalExpr cond
 								if x then evalBlock tblock "ifTbranch" else evalBlock fblock "ifFbranch"
 eval inst@(Return _ a) = addLog inst >>liftM Exit (maybe (return Void)  evalExpr a)
+eval (EndProg) = error "EndProg is a dummy value"
 
 evalBlock :: Block->  String -> RWS.RWST ScopeConfig Log Environment (Either EvalError) SymbolValue
 evalBlock (Block _ n b) name = do
@@ -788,12 +794,12 @@ evalExpr (Var lineno n) = do
 					case fromJust x of
 						(_,Uninitialized) -> RWS.lift $ Left $ VariableNotInitialized lineno n
 						(_,m) -> return m
-evalExpr (UnaryExp lineno op e) = evalExpr e >>= f' op
+evalExpr (UnaryExp _lineno op e) = evalExpr e >>= f' op
 				where
 					f' Negate (ValInt n) = return $ValInt (-n)
 					f' Not (ValBool b) = return $ValBool (not b)
 					f' _ _  = error "unsupported unary expression"
-evalExpr (BinaryExp lineno op aexp bexp) = f' op <$> evalExpr aexp <*> evalExpr bexp
+evalExpr (BinaryExp _lineno op aexp bexp) = f' op <$> evalExpr aexp <*> evalExpr bexp
 				where
 					f' Add (ValInt a) (ValInt b) = ValInt $ a + b
 					f' Minus (ValInt a) (ValInt b) =ValInt $  a - b
@@ -815,5 +821,6 @@ evalExpr (CallFunct lineno n cargs) = eval (CallProc lineno n cargs)
 execString ::  ScopeConfig -> String -> Either ParseError (Either EvalError (SymbolValue, Environment, Log))
 execString mode = liftM (evalProg mode) . runParser prog 0 "Input"
 
-exec :: SourceName -> ScopeConfig -> IO (Either ParseError (Either EvalError (SymbolValue, Environment, Log)))
-exec file mode = return . liftM (evalProg mode) . runParser prog 0 file  =<< readFile file
+exec :: ScopeConfig -> SourceName -> IO (Either ParseError (Either EvalError (SymbolValue, Environment, Log)))
+{-exec mode file = return . liftM (evalProg mode) . runParser prog 0 file  =<< readFile file-}
+exec mode file = return . execString mode =<< readFile file

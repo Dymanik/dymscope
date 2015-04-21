@@ -17,4 +17,4 @@ tests:
 	 cd ..; find examples -name *.ds | xargs -n1 -I{} bash -c 'echo {};./dymScope --ss {}'
 
 clean:
-	rm ../dymScope *.hi *.o
+	rm ../dymScope ../dymScopeGtk *.hi *.o

@@ -1,7 +1,7 @@
+{-# LANGUAGE TemplateHaskell #-}
 import Graphics.UI.Gtk
 import Graphics.UI.Gtk.SourceView
 import Data.List(sortBy,intersperse)
-import Control.Monad.IO.Class
 import Parser
 import Data.IORef
 import Control.Monad
@@ -15,6 +15,9 @@ import Debug.Trace
 import System.Directory
 import GHC.IO.Handle
 import System.IO 
+import qualified Data.ByteString as B
+import qualified Data.ByteString.Internal as B (w2c)
+import qualified Data.FileEmbed as E
 import Control.Exception(finally)
 
 getMode ::  Builder -> IO ScopeConfig
@@ -149,9 +152,9 @@ myDraw (Just logUnit) = do
 		when isStatic $ foldM_ (\a b -> staticChainDraw headers a b >> return b) "" (map symtableName chain)
 		restore
 			where
-				f  = S.fromList . map go . sortBy (\a b ->compare (fst $ snd a) (fst $snd b)). M.toList
+				f  = S.fromList . map go . sortBy (\a b ->compare (fst $ snd a) (fst $ snd b)). M.toList
 				go (k,(n,(t,v))) = DrawStackUnit (k ++ ":" ++ show t) v n
-				stackSeq = F.foldMap (\x -> (DrawHeader $ symtableName x) S.<| f (symtableValues x) ) $tail $ reverse  $  envStack $ logEnv  logUnit
+				stackSeq = F.foldMap (\x -> (DrawHeader $ symtableName x) S.<| f (symtableValues x) ) $ tail $ reverse  $  envStack $ logEnv  logUnit
 				stackDraw (n,h,headers) (DrawHeader s) = stackHeader s h  >> translate 0 stackHeigth >> return (n+1,h+1,M.insert s n headers)
 				stackDraw (n,h,headers) (DrawStackUnit name val pos) = stackUnit name val pos (h-1) isDeep >> translate 0 stackHeigth >> return (n+1,h,headers)
 				chain = init $ staticChain $ envStack $ logEnv logUnit
@@ -172,7 +175,7 @@ drawStack builder logRef codeBuffer = do
 			liftIO $ widgetSetSizeRequest drawArea (-1) (vars logUnit * floor stackHeigth + 50)
 			where				
 				vars Nothing = -1
-				vars (Just logUnit) = F.foldl' (\acc x -> (acc+1) + M.size (symtableValues x))  0 $ envStack $logEnv logUnit
+				vars (Just logUnit) = F.foldl' (\acc x -> (acc+1) + M.size (symtableValues x))  0 $ envStack $ logEnv logUnit
 
 setSensitive ::  Builder -> Bool -> Bool -> IO ()
 setSensitive builder backT nextT = do
@@ -292,7 +295,9 @@ main ::  IO ()
 main = do 
 		initGUI
 		builder <- builderNew
-		builderAddFromFile builder  "resources/dymgtk2.glade"
+		{-builderAddFromFile builder  "resources/dymgtk2.glade"-}
+		let glade = map B.w2c $ B.unpack $ $(E.embedFile "resources/dymgtk2.glade") in
+		        builderAddFromString builder glade
 		codeBuffer <- sourceBufferNew Nothing
 		sourceViewWidg builder codeBuffer
 		window <- builderGetObject builder castToWindow "window1"
