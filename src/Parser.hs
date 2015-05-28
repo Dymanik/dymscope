@@ -23,7 +23,7 @@ import Text.ParserCombinators.Parsec.Language
 import Text.ParserCombinators.Parsec.Expr
 import Data.Map as Map hiding (map,foldr)
 import Data.Functor
-import Data.List (intercalate,isSuffixOf)
+import Data.List (intercalate,isPrefixOf)
 import Data.Maybe
 import Data.Foldable
 import Control.Applicative
@@ -36,11 +36,9 @@ import Debug.Trace
 import Data.Monoid
 
 flagDebug ::  Bool
-flagDebug = False
+flagDebug = True 
 
 type Ident = String
-{-type Type = String-}
---type Block = [Stmt]
 type FunctArgs = [(Ident,Type)]
 
 data Block = Block Int Integer [Stmt]
@@ -194,20 +192,10 @@ dymanikStyle = emptyDef {
 		commentLine = "//",
 		identStart = letter,
 		identLetter = alphaNum <|> char '_',
-		reservedOpNames = ["+","-","/","*","=","&&","||","<",">","<=",">=","==","!=","!", ":"],
-		reservedNames = [
-					"sub",
-					"return",
-					"proc",
-					"if",
-					"else",
-					"var",
-					"int",
-					"bool",
-					"Void",
-					"print",
-					"printLn"
-					]
+		reservedOpNames = ["+","-","/","*","=","&&","||","<",">",
+									"<=",">=","==","!=","!", ":"],
+		reservedNames = ["sub","return","proc","if","else","var",
+							"int","bool", "Void", "print", "printLn" ]
 		}
 
 lexer = Tok.makeTokenParser dymanikStyle
@@ -225,11 +213,14 @@ whiteSpace = Tok.whiteSpace lexer
 
 -- Parser Grammar
 --
+--Parse the whole program
 prog = whiteSpace *> manyTill stmt eof
 
+-- Statments blocks
 stmts = Block <$> (sourceLine <$> getPosition) 
 				<*> (updateState (+1) >> getState ) 
 				<*> many stmt
+
 
 stmt =  declFunct
 	<|> funReturn
@@ -273,21 +264,11 @@ declFunct = DeclFunct <$>  (sourceLine <$> getPosition)
 						<*> braces stmts 
 						<?> "function declaration"
 
-
-{-
- -functdeclargs = commaSep identifier
- -}
-
-functdeclargs = commaSep (pair <$> identifier <*> ( varType))
-		where
-			pair a b = (a,b)
-
-{-assign = Assign <$> identifier <*> (reservedOp "=" *> expr)-}
-
-{-callProc = CallProc <$> identifier <*> parens args -}
+functdeclargs = commaSep ((,) <$> identifier <*> ( varType))
 
 callPrint = CallPrint <$>  (sourceLine <$> getPosition) 
 						<*> (reserved "print" *> parens expr)
+
 callPrintLn = CallPrintLn <$>  (sourceLine <$> getPosition) 
 						<*> (reserved "printLn" *> parens expr)
 
@@ -305,19 +286,19 @@ controlIf = ControlIf <$>  (sourceLine <$> getPosition)
 
 
 opTable ::  [[Operator Char st Expr]]
-opTable = [ [ prefix "-" (flip UnaryExp Negate),
-				prefix "!" (flip UnaryExp Not)],
+opTable = [[ prefix "-" (flip UnaryExp Negate),
+					prefix "!" (flip UnaryExp Not)],
 			[ binary "*" (flip BinaryExp Mult) AssocLeft,
-				binary "/" (flip BinaryExp Div) AssocLeft,
-				binary "%" (flip BinaryExp Mod) AssocLeft ],
+					binary "/" (flip BinaryExp Div) AssocLeft,
+					binary "%" (flip BinaryExp Mod) AssocLeft ],
 			[ binary "+" (flip BinaryExp Add) AssocLeft, 
-				binary "-" (flip BinaryExp Minus) AssocLeft],
+					binary "-" (flip BinaryExp Minus) AssocLeft],
 			[ binary "<" (flip BinaryExp LessT) AssocLeft,
-				binary "<=" (flip BinaryExp LessTE) AssocLeft,
-				binary ">" (flip BinaryExp GreaterT) AssocLeft,
-				binary ">=" (flip BinaryExp GreaterTE) AssocLeft],
+					binary "<=" (flip BinaryExp LessTE) AssocLeft,
+					binary ">" (flip BinaryExp GreaterT) AssocLeft,
+					binary ">=" (flip BinaryExp GreaterTE) AssocLeft],
 			[ binary "==" (flip BinaryExp Equals) AssocLeft,
-				binary "!=" (flip BinaryExp NEquals) AssocLeft],
+					binary "!=" (flip BinaryExp NEquals) AssocLeft],
 			[ binary "&&" (flip BinaryExp And) AssocLeft],
 			[ binary "||" (flip BinaryExp Or) AssocLeft]
 		  ]
@@ -344,7 +325,7 @@ term =  parens expr
 --------------evaluation --------
 
 data SymbolTable = SymbolTable {
-					symtableValues :: Map String (Int,(Type,[SymbolValue])),
+					symtableValues :: Map Ident (Int,(Type,[SymbolValue])),
 					symtableEnv :: Maybe (Map String (Integer,Int)),
 					symtableStackPos :: Integer,
 					symtableFramePointer :: Int,
@@ -378,7 +359,6 @@ instance Show SymbolValue where
 
 data Environment = Environment {
 					envStack :: [SymbolTable],
-					{-envCallStack  :: [(String,[SymbolTable])],-}
 					envRetType :: [Type],
 					envScope :: Integer
 				}			
@@ -389,8 +369,8 @@ data Environment = Environment {
 data ScopeConfig = ScopeConfig {
 					deepBinding :: Bool,
 					staticScoping :: Bool,
-					lookupScope :: String-> RWS.RWST ScopeConfig Log Environment (Either EvalError) (Maybe (Type,SymbolValue)),
-					assignScope	:: String->(Type,SymbolValue) -> RWS.RWST ScopeConfig Log Environment (Either EvalError) ()
+					lookupScope :: Ident-> RWS.RWST ScopeConfig Log Environment (Either EvalError) (Maybe (Type,SymbolValue)),
+					assignScope	:: Ident->(Type,SymbolValue) -> RWS.RWST ScopeConfig Log Environment (Either EvalError) ()
 				}
 
 
@@ -454,7 +434,7 @@ addLog inst = RWS.tell =<< (\a b c d -> S.singleton $ Logunit a b c d ) <$> RWS.
 getBindings :: (String,Int) -> RWS.RWST ScopeConfig Log Environment (Either EvalError) (Map String (Integer,Int))
 getBindings (parent,off) =  RWS.asks staticScoping >>= \x-> if x
 				then  foldr go Map.empty <$>RWS.gets (staticChain . g .  dropWhile ((/= parent).symtableName) . envStack)
-				else  foldr go Map.empty <$>RWS.gets (dropWhile (\y->"|args" `isSuffixOf` symtableName y) . envStack)
+				else  foldr go Map.empty <$>RWS.gets (dropWhile (\y->"args.of." `isPrefixOf` symtableName y) . envStack)
 					where
 						go = union . (\y -> fmap (\(n,_) -> (symtableStackPos y,n)) (symtableValues y) )
 						g [] = error "empty stack / Parent not Found"
@@ -584,12 +564,10 @@ insertSymbol lineno toBind name val  = do
 				insert' a b (x:xs) = x{symtableValues=insert a b (symtableValues x)} : xs
 				stackSP  = (\x -> symtableFramePointer x + fromIntegral (Map.size (symtableValues x))) <$>  RWS.gets (head . envStack) 
 				getValWithBindings = case val of
-					(t,vf@(ValFun{})) -> if toBind
+					(t,vf@(ValFun{valFunEnv=env})) -> if toBind
 									then do
-										pos <- RWS.gets (symtableStackPos . head .envStack)
-										sp <- stackSP
 										binds <- flip intersection (getFreeVariables (valFunargs vf) (valFunBlock vf)) <$> getBindings (valFunParent vf)
-										return (t,[vf{valFunEnv=Just (insert name (pos,sp) binds)}])
+										return (t,[vf{valFunEnv=env `mplus` Just binds}])
 									else return (t,[vf{valFunEnv=Nothing}])
 					(t,v) -> return (t,[v])
 
@@ -693,23 +671,29 @@ eval inst@(CallProc lineno name arg) = do
 								valFunType=typ
 								}) -> do 
 									mapM evalExpr arg >>= insertArgs n parent fargs env
-									RWS.modify (\env'->env'{envRetType=typ:envRetType env'})
-									ret <- evalBlock block name
-									RWS.modify (\env'->env'{envRetType=tail $ envRetType env'})
+									ret <- typecheck typ =<< evalBlock block name
 									exitScope
 									return ret
+
 					(t,_) -> RWS.lift $ Left $ WrongType lineno t TFunct 
 							)	
 						where
+							typecheck typ val =if typ == valueType val 
+												then case val of
+													Exit v -> return v
+													Void -> return Void
+												else
+													RWS.lift $ Left $ WrongType lineno (valueType val) typ
 							insertArgs n parent fargs env args' = do 
-								newScope (name++"|"++show n++"|args") parent env
+								newScope ("args.of."++name++"|"++show n) parent env
 								zipWithM (\(nam,t) v-> insertSymbol lineno True  nam (t,v)) fargs args' 
 								
 eval inst@(ControlIf lineno cond tblock fblock) = do
 								addLog inst
-								evalType cond >>= (\x -> unless (x == TBool) (RWS.lift $ Left $ WrongType lineno TBool x))
+								evalType cond >>= (\x -> unless (x == TBool) (RWS.lift $ Left $ WrongType lineno x TBool))
 								(ValBool x) <- evalExpr cond
 								if x then evalBlock tblock "ifTbranch" else evalBlock fblock "ifFbranch"
+
 eval inst@(Return _ a) = addLog inst >>liftM Exit (maybe (return Void)  evalExpr a)
 eval (EndProg) = error "EndProg is a dummy value"
 
@@ -724,13 +708,11 @@ evalBlock (Block _ n b) name = do
 			eval' [] = return Void
 			eval' (x:xs) = do
 						ret <- eval x 
-						expectedType <- RWS.gets (head . envRetType)
-						let retType = valueType ret in
-							unless (expectedType == retType) (RWS.lift $ Left $ WrongType (wGetLine x) expectedType retType)
 						case ret of
 							Void -> eval' xs
-							Exit val -> return val
+							a@(Exit val) -> return a
 							_ -> eval' xs
+									
 
 
 evalType :: Expr -> RWS.RWST ScopeConfig Log Environment (Either EvalError) Type

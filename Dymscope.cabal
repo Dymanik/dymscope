@@ -16,7 +16,7 @@ version:             0.1.0.0
 synopsis:            A graphical tool for studying scopes and binding strategies.
 
 -- A longer description of the package.
--- description:         
+description:         Dymscope is an interpreter and gui, aimed towards the study of scopes and bindings. It uses a simplified language.
 
 -- URL for the project homepage or repository.
 homepage:            https://github.com/Dymanik/dymscope
@@ -48,6 +48,10 @@ extra-source-files:  README.md
 -- Constraint on the version of Cabal needed to build this package.
 cabal-version:       >=1.10
 
+source-repository head
+  type: git
+  location: https://github.com/Dymanik/dymscope
+
 
 executable dymscopeGtk
   -- .hs or .lhs file containing the Main module.
@@ -66,7 +70,7 @@ executable dymscopeGtk
   hs-source-dirs:      src
   
   -- GHC flags
-  ghc-options: -Wall -fno-warn-unused-do-bind -fno-warn-missing-signatures -O2
+  ghc-options: -Wall -fno-warn-unused-do-bind -fno-warn-missing-signatures 
 
 
   -- Base language which the package is written in.
@@ -89,7 +93,7 @@ executable dymscope
   hs-source-dirs:      src
   
   -- GHC flags
-  ghc-options: -Wall -fno-warn-unused-do-bind -fno-warn-missing-signatures -O2
+  ghc-options: -Wall -fno-warn-unused-do-bind -fno-warn-missing-signatures 
 
   -- Base language which the package is written in.
   default-language:    Haskell2010

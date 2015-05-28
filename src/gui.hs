@@ -110,7 +110,7 @@ stackHeader name hn  = do
 		fill
 		moveTo 2 15
 		setSourceRGB 0 0 0
-		showText name
+		showText $ takeWhile (/='|') name
 		Cairo.rectangle 0 0 stackWidth stackHeigth
 		stroke
 
