@@ -1,0 +1,20 @@
+//Closures are only created once
+
+var a:int;
+a=10;
+
+sub f():Void{
+	a=a-1;
+	printLn(a);
+}
+
+sub g(a:int,h:sub):Void{
+	if(a<0){
+		return;
+	}else{
+		h();
+		g(a-1,h);
+	}
+}
+
+g(10,f);

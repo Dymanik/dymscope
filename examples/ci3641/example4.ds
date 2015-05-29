@@ -1,0 +1,30 @@
+var yu:int;
+yu=1;
+
+sub pi(k:int,n:int,t:sub):Void{
+        var a:int;
+        a=k+n;
+        sub chu(n:int):Void{
+                yu=k+a;
+                a=n+yu;
+        }
+
+        var temp:int;
+        temp=k;
+        var k:int;
+        k=temp*3;
+        if(k<=a){
+                pi(k,a,chu);
+        }else{
+                t(k);
+                k=a;
+        }
+        printLn(yu+k);
+}
+
+sub main():Void{
+        pi(yu,yu+4,pi);
+        printLn(yu);
+}
+main();
+

@@ -36,7 +36,7 @@ import Debug.Trace
 import Data.Monoid
 
 flagDebug ::  Bool
-flagDebug = True 
+flagDebug = False
 
 type Ident = String
 type FunctArgs = [(Ident,Type)]
@@ -682,6 +682,7 @@ eval inst@(CallProc lineno name arg) = do
 												then case val of
 													Exit v -> return v
 													Void -> return Void
+													_ -> error "unexpected return from block evaluation"
 												else
 													RWS.lift $ Left $ WrongType lineno (valueType val) typ
 							insertArgs n parent fargs env args' = do 

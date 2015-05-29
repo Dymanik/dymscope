@@ -1,0 +1,24 @@
+var u:int;
+u=1;
+
+sub t(ro:int,p:sub):Void{
+	sub q(fl:int):Void{
+		u=ro+fl;
+	}
+
+	if (ro>=2){
+		var u:int;
+		u=7;
+		t(ro/2,q);
+	}else{
+		p(ro+1);
+	}
+
+	printLn(u);
+}
+
+sub main():Void{
+	t(u+3, t);
+	printLn(u);
+}
+main();

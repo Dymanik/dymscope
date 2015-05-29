@@ -13,6 +13,7 @@ import qualified Data.Map as M
 import qualified Data.Foldable as F
 import Debug.Trace
 import System.Directory
+import System.Timeout
 import GHC.IO.Handle
 import System.IO 
 import qualified Data.ByteString as B
@@ -256,6 +257,7 @@ processExec builder logRef (_,_,logUnit)  = do
 {-runButtonAction :: Builder-> IORef (Log, Maybe  Logunit, Log) -> IO Bool-}
 runButtonAction :: SourceBufferClass self =>Builder-> IORef (S.Seq a, Maybe Logunit, S.Seq Logunit) -> self -> IO Bool
 runButtonAction builder logRef codeBuffer = do
+			currLineBuffer <-  liftIO $ builderGetObject builder castToTextBuffer "currLineBuffer"
 			tempdir <- getTemporaryDirectory
 			(tempfile,tmph) <- openTempFile tempdir "run"
 			hDuplicateTo tmph stdout	
@@ -269,7 +271,8 @@ runButtonAction builder logRef codeBuffer = do
 			trace code $ return ()
 			writeIORef logRef (S.empty,Nothing,S.empty)
 			finally (do 
-				unless (null code) $ either print (either print (processExec builder logRef)) $ execString mode code
+				ret<-timeout 3000000 $ unless (null code) $ either print (either print (processExec builder logRef)) $ execString mode code
+				when (isNothing ret) (textBufferSetText currLineBuffer "ERROR: Timed Out (Posible Infinite Loop)")
 				hFlush stdout
 				hSeek tmph AbsoluteSeek 0
 				{-sourceBufferCreateSourceMark codeBuffer Nothing "" =<< textBufferGetIterAtLine codeBuffer 0-}
